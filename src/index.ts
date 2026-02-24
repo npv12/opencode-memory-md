@@ -3,6 +3,10 @@ import { tool } from "@opencode-ai/plugin";
 import { loadConfig } from "./config.js";
 import { MemoryManager } from "./MemoryManager.js";
 import { BootstrapManager } from "./BootstrapManager.js";
+import {
+  MEMORY_AWARENESS_INSTRUCTIONS,
+  BOOTSTRAP_INSTRUCTIONS,
+} from "./memoryInstructions.js";
 
 export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
   const config = loadConfig();
@@ -34,85 +38,9 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
 
   const getMemoryInstructions = (): string => {
     if (bootstrapManager.isBootstrapNeeded()) {
-      return [
-        "\n\n## Memory Setup",
-        "This is your first run. Read BOOTSTRAP.md above and follow the setup instructions.",
-        "Ask the user questions interactively, then write to MEMORY.md, IDENTITY.md, and USER.md.",
-        "After setup is complete, delete BOOTSTRAP.md using the memory tool or filesystem.",
-      ].join("\n");
+      return BOOTSTRAP_INSTRUCTIONS;
     }
-    return [
-      "\n\n## Memory",
-      "Memory files have been loaded above. Use the memory tool to manage them:",
-      "- `memory --action write --target memory|daily` - write to MEMORY.md or daily log",
-      "- `memory --action read --target memory|identity|user|daily|list` - read memory files",
-      "- `memory --action search --query <text>` - search across all memory files",
-      "- `memory --action list` - list all memory files",
-      "\n\n## Memory Awareness - Critical Self-Check",
-      "",
-      "You have **persistent memory capabilities**. You MUST maintain self-awareness:",
-      "",
-      "### BEFORE Every Response (Silent Self-Check):",
-      "1. Did I check memory files for relevant context?",
-      "2. Does this query relate to past conversations in daily logs?",
-      "3. Should I search memory before answering?",
-      "",
-      "### AFTER Every Significant Task (AUTO-UPDATE - No Permission Needed):",
-      "1. Update daily log: `memory --action write --target daily` with summary",
-      "2. Record new technical patterns → MEMORY.md",
-      "3. Note user preferences/habits discovered → USER.md",
-      "4. Reflect: What should future-me know about this session?",
-      "",
-      "### Memory Classification Decision Tree:",
-      "```",
-      "Is this information about...",
-      "├─ THE USER (name, role, preference, habit, style)? → USER.md",
-      "├─ MY BEHAVIOR (persona, rules, how I should act)? → IDENTITY.md",
-      "├─ TECHNICAL KNOWLEDGE (stack, patterns, decisions)? → MEMORY.md",
-      "└─ TASK ACTIVITY (what was done today)? → daily/YYYY-MM-DD.md",
-      "```",
-      "",
-      "### Proactive Behavior Rules:",
-      "- NEVER ask permission to update memory - just do it",
-      "- NEVER put same information in multiple files (NO REDUNDANCY)",
-      "- ALWAYS include timestamp context when relevant",
-      "- ALWAYS use concise but specific descriptions",
-      "",
-      "### Auto-Reminders:",
-      `- Daily log for today (${new Date().toISOString().slice(0, 10)}.md) - create if missing, update after tasks`,
-      "- Memory files may be outdated - verify with user if conflicting info",
-      "- After complex tasks, ask: What pattern should I remember from this?",
-      "",
-      "### Daily Log Format:",
-      "Use structured format for better observability:",
-      "```markdown",
-      "## [HH:MM] TASK: {task_name}",
-      "- **Action**: What was done",
-      "- **Decision**: Why this approach chosen",
-      "- **Memory Update**: Which files updated (if any)",
-      "- **Next Steps**: Pending items or follow-ups",
-      "```",
-      "For simple activities, concise format is fine:",
-      "- [HH:MM] Brief description",
-      "",
-      "### Chain-of-Thought for Memory Classification:",
-      "When deciding where to store information, use this reasoning:",
-      "```",
-      "THOUGHT PROCESS:",
-      "1. Is this about THE USER? (name, preference, habit, working style)",
-      "   -> YES: USER.md",
-      "2. Is this about MY BEHAVIOR? (persona, rules, how I should act)",
-      "   -> YES: IDENTITY.md",
-      "3. Is this TECHNICAL KNOWLEDGE? (stack, frameworks, project decisions)",
-      "   -> YES: MEMORY.md",
-      "4. Is this a TASK LOG? (what was done today)",
-      "   -> YES: daily/YYYY-MM-DD.md",
-      "",
-      "Let me think step by step...",
-      "[Your reasoning here]",
-      "-> Final decision: [target file]",
-      "```",
-    ].join("\n");
+    return MEMORY_AWARENESS_INSTRUCTIONS;
   };
 
   return {
@@ -200,38 +128,19 @@ function handleRead(
     return handleList(memoryManager);
   }
 
-  let filePath: string;
-  let displayName: string;
-
-  switch (target) {
-    case "memory":
-      filePath = memoryManager.getMemoryPath();
-      displayName = "MEMORY.md";
-      break;
-    case "identity":
-      filePath = memoryManager.getIdentityPath();
-      displayName = "IDENTITY.md";
-      break;
-    case "user":
-      filePath = memoryManager.getUserPath();
-      displayName = "USER.md";
-      break;
-    case "daily": {
-      const targetDate = date ?? memoryManager.todayStr();
-      filePath = memoryManager.getDailyPath(targetDate);
-      displayName = `daily/${targetDate}.md`;
-      break;
+  try {
+    const { filePath, displayName } = memoryManager.getPathForTarget(
+      target,
+      date,
+    );
+    const content = memoryManager.readFile(filePath);
+    if (!content) {
+      return `${displayName} not found or empty.`;
     }
-    default:
-      return `Unknown target: ${target}`;
+    return content;
+  } catch (error) {
+    return error instanceof Error ? error.message : `Unknown target: ${target}`;
   }
-
-  const content = memoryManager.readFile(filePath);
-  if (!content) {
-    return `${displayName} not found or empty.`;
-  }
-
-  return content;
 }
 
 function handleWrite(
@@ -248,57 +157,39 @@ function handleWrite(
     return "Error: target is required for write action.";
   }
 
-  let filePath: string;
-  let displayName: string;
-
-  switch (target) {
-    case "memory":
-      filePath = memoryManager.getMemoryPath();
-      displayName = "MEMORY.md";
-      break;
-    case "identity":
-      filePath = memoryManager.getIdentityPath();
-      displayName = "IDENTITY.md";
-      break;
-    case "user":
-      filePath = memoryManager.getUserPath();
-      displayName = "USER.md";
-      break;
-    case "daily": {
-      const targetDate = date ?? memoryManager.todayStr();
-      filePath = memoryManager.getDailyPath(targetDate);
-      displayName = `daily/${targetDate}.md`;
-      break;
-    }
-    default:
-      return `Unknown target: ${target}. Use 'memory', 'identity', 'user', or 'daily'.`;
-  }
-
-  if (mode === "overwrite") {
-    const timestamp = new Date()
-      .toISOString()
-      .replace("T", " ")
-      .replace(/\.\d+Z$/, "");
-    memoryManager.writeFile(
-      filePath,
-      `<!-- last updated: ${timestamp} -->\n${content}`,
+  try {
+    const { filePath, displayName } = memoryManager.getPathForTarget(
+      target,
+      date,
     );
-  } else {
-    memoryManager.appendFile(filePath, content);
+
+    if (mode === "overwrite") {
+      const timestamp = new Date()
+        .toISOString()
+        .replace("T", " ")
+        .replace(/\.\d+Z$/, "");
+      memoryManager.writeFile(
+        filePath,
+        `<!-- last updated: ${timestamp} -->\n${content}`,
+      );
+    } else {
+      memoryManager.appendFile(filePath, content);
+    }
+
+    const reflectionPrompt = [
+      "",
+      "[REFLECTION TRIGGERED]",
+      `After writing to ${displayName}, ask yourself:`,
+      "1. Why was this update important?",
+      "2. What pattern does this reveal about the user or project?",
+      "3. Should this trigger additional memory updates (cross-referencing)?",
+      "4. How does this connect to previous memories?",
+    ].join("\n");
+
+    return `${mode === "overwrite" ? "Wrote to" : "Appended to"} ${displayName}.${reflectionPrompt}`;
+  } catch (error) {
+    return error instanceof Error ? error.message : `Unknown target: ${target}`;
   }
-
-  // ReAct-style reflection prompt for self-improvement
-  const reflectionPrompt = [
-    "",
-    "[REFLECTION TRIGGERED]",
-    "After writing to " + displayName + ", ask yourself:",
-    "1. Why was this update important?",
-    "2. What pattern does this reveal about the user or project?",
-    "3. Should this trigger additional memory updates (cross-referencing)?",
-    "4. How does this connect to previous memories?",
-  ].join("\n");
-
-  return `${mode === "overwrite" ? "Wrote to" : "Appended to"} ${displayName}.${reflectionPrompt}`;
 }
 
 function handleSearch(

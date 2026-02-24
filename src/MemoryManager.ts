@@ -42,6 +42,29 @@ export class MemoryManager {
     return path.join(this.dailyDir, `${date}.md`);
   }
 
+  getPathForTarget(
+    target: string,
+    date?: string,
+  ): { filePath: string; displayName: string } {
+    switch (target) {
+      case "memory":
+        return { filePath: this.getMemoryPath(), displayName: "MEMORY.md" };
+      case "identity":
+        return { filePath: this.getIdentityPath(), displayName: "IDENTITY.md" };
+      case "user":
+        return { filePath: this.getUserPath(), displayName: "USER.md" };
+      case "daily": {
+        const targetDate = date ?? this.todayStr();
+        return {
+          filePath: this.getDailyPath(targetDate),
+          displayName: `daily/${targetDate}.md`,
+        };
+      }
+      default:
+        throw new Error(`Unknown target: ${target}`);
+    }
+  }
+
   todayStr(): string {
     return new Date().toISOString().slice(0, 10);
   }
@@ -72,7 +95,12 @@ export class MemoryManager {
   deleteFile(filePath: string): void {
     try {
       fs.unlinkSync(filePath);
-    } catch {}
+    } catch (error) {
+      const err = error as NodeJS.ErrnoException;
+      if (err.code !== "ENOENT") {
+        throw error;
+      }
+    }
   }
 
   fileExists(filePath: string): boolean {
@@ -113,10 +141,12 @@ export class MemoryManager {
     ];
 
     for (const { dir, prefix } of searchPaths) {
+      if (results.length >= maxResults) break;
       try {
-        const files = fs.readdirSync(dir).filter((f) => f.endsWith(".md"));
+        const files = fs
+          .readdirSync(dir)
+          .filter((f) => f.endsWith(".md") && f !== "BOOTSTRAP.md");
         for (const file of files) {
-          if (file === "BOOTSTRAP.md") continue;
           if (results.length >= maxResults) break;
           const filePath = path.join(dir, file);
           const content = this.readFile(filePath);
@@ -136,7 +166,9 @@ export class MemoryManager {
             }
           }
         }
-      } catch {}
+      } catch {
+        continue;
+      }
     }
     return results;
   }
@@ -153,7 +185,9 @@ export class MemoryManager {
       for (const f of rootFiles) {
         if (f !== "BOOTSTRAP.md") root.push(f);
       }
-    } catch {}
+    } catch {
+      // Directory doesn't exist yet
+    }
 
     try {
       const dailyFiles = fs
@@ -162,7 +196,9 @@ export class MemoryManager {
         .sort()
         .reverse();
       daily.push(...dailyFiles);
-    } catch {}
+    } catch {
+      // Directory doesn't exist yet
+    }
 
     return { root, daily };
   }

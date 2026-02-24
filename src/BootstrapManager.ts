@@ -1,4 +1,5 @@
 import { MemoryManager } from "./MemoryManager.js";
+import { MEMORY_AWARENESS_INSTRUCTIONS } from "./memoryInstructions.js";
 
 const BOOTSTRAP_TEMPLATE = (
   bootstrapPath: string,
@@ -46,72 +47,7 @@ Once you've collected all the information:
 Be conversational and natural. Don't overwhelm with all questions at once.
 
 ---
-
-## Memory Awareness - Critical Self-Check
-
-You have **persistent memory capabilities**. You MUST maintain self-awareness:
-
-### BEFORE Every Response (Silent Self-Check):
-1. Did I check memory files for relevant context?
-2. Does this query relate to past conversations in daily logs?
-3. Should I search memory before answering?
-
-### AFTER Every Significant Task (AUTO-UPDATE - No Permission Needed):
-1. Update daily log: \`memory --action write --target daily\` with summary
-2. Record new technical patterns → MEMORY.md
-3. Note user preferences/habits discovered → USER.md
-4. Reflect: What should future-me know about this session?
-
-### Memory Classification Decision Tree:
-\`\`\`
-Is this information about...
-├─ THE USER (name, role, preference, habit, style)? → USER.md
-├─ MY BEHAVIOR (persona, rules, how I should act)? → IDENTITY.md
-├─ TECHNICAL KNOWLEDGE (stack, patterns, decisions)? → MEMORY.md
-└─ TASK ACTIVITY (what was done today)? → daily/YYYY-MM-DD.md
-\`\`\`
-
-### Proactive Behavior Rules:
-- NEVER ask permission to update memory - just do it
-- NEVER put same information in multiple files (NO REDUNDANCY)
-- ALWAYS include timestamp context when relevant
-- ALWAYS use concise but specific descriptions
-
-### Auto-Reminders:
-- Daily log for today - create if missing, update after tasks
-- Memory files may be outdated - verify with user if conflicting info
-- After complex tasks, ask: What pattern should I remember from this?
-
-### Daily Log Format:
-Use structured format for better observability:
-\`\`\`markdown
-## [HH:MM] TASK: {task_name}
-- **Action**: What was done
-- **Decision**: Why this approach chosen
-- **Memory Update**: Which files updated (if any)
-- **Next Steps**: Pending items or follow-ups
-\`\`\`
-
-For simple activities, concise format is fine:
-- [HH:MM] Brief description
-
-### Chain-of-Thought for Memory Classification:
-When deciding where to store information, use this reasoning:
-\`\`\`
-THOUGHT PROCESS:
-1. Is this about THE USER? (name, preference, habit, working style)
-   → YES: USER.md
-2. Is this about MY BEHAVIOR? (persona, rules, how I should act)
-   → YES: IDENTITY.md
-3. Is this TECHNICAL KNOWLEDGE? (stack, frameworks, project decisions)
-   → YES: MEMORY.md
-4. Is this a TASK LOG? (what was done today)
-   → YES: daily/YYYY-MM-DD.md
-
-Let me think step by step...
-[Your reasoning here]
-→ Final decision: [target file]
-\`\`\`
+${MEMORY_AWARENESS_INSTRUCTIONS.trim()}
 `;
 
 const MEMORY_TEMPLATE = `# MEMORY.md - Long-Term Memory

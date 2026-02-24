@@ -4,19 +4,11 @@ import * as fs from "node:fs";
 import type { MemoryConfig } from "./types.js";
 
 export function getMemoryDir(): string {
-  const platform = os.platform();
   const home = os.homedir();
-
-  switch (platform) {
-    case "win32":
-      return path.join(home, "AppData", "Roaming", "opencode", "memory");
-    case "darwin":
-      return path.join(home, ".config", "opencode", "memory");
-    case "linux":
-      return path.join(home, ".config", "opencode", "memory");
-    default:
-      return path.join(home, ".config", "opencode", "memory");
+  if (os.platform() === "win32") {
+    return path.join(home, "AppData", "Roaming", "opencode", "memory");
   }
+  return path.join(home, ".config", "opencode", "memory");
 }
 
 export function resolvePath(filePath: string): string {
