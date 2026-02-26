@@ -8,7 +8,7 @@ export const DEFAULT_CONFIG: MemoryConfig = {
 
 export type MemoryTarget = "memory" | "identity" | "user" | "daily";
 export type WriteMode = "append" | "overwrite";
-export type MemoryAction = "read" | "write" | "search" | "list";
+export type MemoryAction = "read" | "write" | "search" | "list" | "edit";
 
 export interface SearchResult {
   file: string;

@@ -35,6 +35,7 @@ Add to your OpenCode configuration at `~/.config/opencode/opencode.json`:
 |--------|-------------|------------|
 | `read` | Read memory file | `target`: memory, identity, user, daily |
 | `write` | Write to memory file | `target`, `content`, `mode`: append/overwrite |
+| `edit` | Edit specific part of file (not daily) | `target`, `oldString`, `newString` |
 | `search` | Search memory files | `query`, `max_results` (optional) |
 | `list` | List all files | - |
 
@@ -45,6 +46,7 @@ memory --action read --target memory
 memory --action write --target memory --content "Remember to use PostgreSQL for all projects"
 memory --action write --target identity --content "- **Name**: Jarvis" --mode overwrite
 memory --action write --target daily --content "Fixed critical bug in auth module"
+memory --action edit --target memory --oldString "Project: Auth Service" --newString "Project: Payment Service"
 memory --action search --query "PostgreSQL"
 memory --action list
 ```

@@ -59,6 +59,7 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
           "**Actions:**",
           "- `read`: Read a memory file (memory, identity, user, daily, or list all)",
           "- `write`: Write to a memory file (memory, identity, user, daily) with append or overwrite mode",
+          "- `edit`: Edit a specific part of memory/identity/user file (not daily). AI must read file first to get exact oldString.",
           "- `search`: Search across all memory files",
           "- `list`: List all memory files",
           "",
@@ -70,7 +71,7 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
         ].join("\n"),
         args: {
           action: tool.schema
-            .enum(["read", "write", "search", "list"])
+            .enum(["read", "write", "edit", "search", "list"])
             .describe("Action to perform"),
           target: tool.schema
             .enum(["memory", "identity", "user", "daily"])
@@ -96,6 +97,16 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
             .number()
             .optional()
             .describe("Max search results (default: 20)"),
+          oldString: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Text to replace (for edit action). Must read file first to get exact text.",
+            ),
+          newString: tool.schema
+            .string()
+            .optional()
+            .describe("Replacement text (for edit action)"),
         },
         async execute(args) {
           memoryManager.ensureDirectories();
@@ -105,6 +116,8 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
               return handleRead(args, memoryManager);
             case "write":
               return handleWrite(args, memoryManager);
+            case "edit":
+              return handleEdit(args, memoryManager);
             case "search":
               return handleSearch(args, memoryManager);
             case "list":
@@ -189,6 +202,37 @@ function handleWrite(
     return `${mode === "overwrite" ? "Wrote to" : "Appended to"} ${displayName}.${reflectionPrompt}`;
   } catch (error) {
     return error instanceof Error ? error.message : `Unknown target: ${target}`;
+  }
+}
+
+function handleEdit(
+  params: { target?: string; oldString?: string; newString?: string },
+  memoryManager: MemoryManager,
+): string {
+  const { target, oldString, newString } = params;
+
+  if (!target) {
+    return "Error: target is required for edit action.";
+  }
+
+  if (target === "daily") {
+    return "Error: edit action is not supported for daily logs. Use append mode instead.";
+  }
+
+  if (!oldString) {
+    return "Error: oldString is required for edit action.";
+  }
+
+  if (newString === undefined) {
+    return "Error: newString is required for edit action.";
+  }
+
+  try {
+    const { filePath, displayName } = memoryManager.getPathForTarget(target);
+    memoryManager.editFile(filePath, oldString, newString);
+    return `Edited ${displayName}`;
+  } catch (error) {
+    return error instanceof Error ? error.message : `Failed to edit ${target}`;
   }
 }
 

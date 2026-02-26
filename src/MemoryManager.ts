@@ -92,6 +92,32 @@ export class MemoryManager {
     fs.writeFileSync(filePath, (existing ?? "") + separator + stamped, "utf-8");
   }
 
+  editFile(filePath: string, oldString: string, newString: string): void {
+    const content = this.readFile(filePath);
+    if (!content) {
+      throw new Error("File not found or empty");
+    }
+
+    if (!content.includes(oldString)) {
+      throw new Error("oldString not found in file");
+    }
+
+    const matches = content.split(oldString).length - 1;
+    if (matches > 1) {
+      throw new Error(
+        `Found ${matches} occurrences of oldString, expected exactly 1`,
+      );
+    }
+
+    const updatedContent = content.replace(oldString, newString);
+    const timestamp = new Date()
+      .toISOString()
+      .replace("T", " ")
+      .replace(/\.\d+Z$/, "");
+    const stampedContent = `<!-- last updated: ${timestamp} -->\n${updatedContent}`;
+    fs.writeFileSync(filePath, stampedContent, "utf-8");
+  }
+
   deleteFile(filePath: string): void {
     try {
       fs.unlinkSync(filePath);
