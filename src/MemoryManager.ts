@@ -5,8 +5,25 @@ import type {
   SearchResult,
   ListResult,
   ContextFile,
+  TimestampEntry,
+  SemanticSearchResult,
+  MonthGroup,
 } from "./types.js";
-import { ensureDir } from "./config.js";
+import { ensureDir, getMemoryDir } from "./config.js";
+import { atomicWrite } from "./atomicWrite.js";
+import { checkLineLimit } from "./validation.js";
+import { gitCommit } from "./git.js";
+import { embedText } from "./embedding.js";
+import { chunkMarkdown } from "./chunker.js";
+import {
+  upsertFile,
+  deleteFileVectors,
+  type SearchResult as VectorSearchResult,
+} from "./vector-store.js";
+import {
+  parseContentByTimestamp,
+  extractTimestamps,
+} from "./timestampParser.js";
 
 export class MemoryManager {
   private config: MemoryConfig;
@@ -77,22 +94,18 @@ export class MemoryManager {
     }
   }
 
-  writeFile(filePath: string, content: string): void {
-    fs.writeFileSync(filePath, content, "utf-8");
+  async writeFile(filePath: string, content: string): Promise<void> {
+    checkLineLimit(filePath, content);
+    atomicWrite(filePath, content);
+    await this.embedAndIndex(filePath, content);
+    await gitCommit(`Update ${path.basename(filePath)}`);
   }
 
-  appendFile(filePath: string, content: string): void {
-    const existing = this.readFile(filePath);
-    const separator = existing?.trim() ? "\n\n" : "";
-    const timestamp = new Date()
-      .toISOString()
-      .replace("T", " ")
-      .replace(/\.\d+Z$/, "");
-    const stamped = `<!-- ${timestamp} -->\n${content}`;
-    fs.writeFileSync(filePath, (existing ?? "") + separator + stamped, "utf-8");
-  }
-
-  editFile(filePath: string, oldString: string, newString: string): void {
+  async editFile(
+    filePath: string,
+    oldString: string,
+    newString: string,
+  ): Promise<void> {
     const content = this.readFile(filePath);
     if (!content) {
       throw new Error("File not found or empty");
@@ -110,12 +123,85 @@ export class MemoryManager {
     }
 
     const updatedContent = content.replace(oldString, newString);
-    const timestamp = new Date()
-      .toISOString()
-      .replace("T", " ")
-      .replace(/\.\d+Z$/, "");
-    const stampedContent = `<!-- last updated: ${timestamp} -->\n${updatedContent}`;
-    fs.writeFileSync(filePath, stampedContent, "utf-8");
+    atomicWrite(filePath, updatedContent);
+    await this.embedAndIndex(filePath, updatedContent);
+    await gitCommit(`Edit ${path.basename(filePath)}`);
+  }
+
+  async deleteByTimestamp(
+    target: string,
+    timestamp: string,
+    date?: string,
+  ): Promise<string> {
+    const { filePath, displayName } = this.getPathForTarget(target, date);
+    const content = this.readFile(filePath);
+
+    if (!content) {
+      throw new Error(`${displayName} not found or empty`);
+    }
+
+    const entries = parseContentByTimestamp(content);
+    const filteredEntries = entries.filter(
+      (entry) => entry.timestamp !== timestamp,
+    );
+
+    if (filteredEntries.length === entries.length) {
+      throw new Error(`No entries found matching timestamp: ${timestamp}`);
+    }
+
+    const newContent = filteredEntries
+      .map((e) => `<!-- ${e.timestamp} -->\n${e.content}`)
+      .join("\n\n");
+
+    atomicWrite(filePath, newContent);
+    await this.embedAndIndex(filePath, newContent);
+    await gitCommit(`Delete entries from ${path.basename(filePath)}`);
+
+    return `Deleted ${entries.length - filteredEntries.length} entries from ${displayName}`;
+  }
+
+  appendFile(filePath: string, content: string): void {
+    const existing = this.readFile(filePath);
+    const separator = existing?.trim() ? "\n\n" : "";
+    const timestamp = this.getLocalTimestamp();
+    const stamped = `<!-- ${timestamp} -->\n${content}`;
+    const newContent = (existing ?? "") + separator + stamped;
+
+    checkLineLimit(filePath, newContent);
+    atomicWrite(filePath, newContent);
+    gitCommit(`Append to ${path.basename(filePath)}`);
+  }
+
+  getLocalTimestamp(): string {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  }
+
+  private async embedAndIndex(
+    filePath: string,
+    content: string,
+  ): Promise<void> {
+    try {
+      const chunks = chunkMarkdown(content, filePath);
+      const embedded = await Promise.all(
+        chunks.map(async (chunk) => ({
+          vector: await embedText(chunk.text),
+          metadata: {
+            filePath,
+            heading: chunk.heading,
+            text: chunk.text,
+            hash: chunk.hash,
+          },
+        })),
+      );
+      await upsertFile(filePath, embedded);
+    } catch (err) {
+      const errMsg = (err as Error).message;
+      if (!errMsg.includes("not initialized")) {
+        throw err;
+      }
+    }
   }
 
   deleteFile(filePath: string): void {
@@ -199,6 +285,43 @@ export class MemoryManager {
     return results;
   }
 
+  async semanticSearch(
+    query: string,
+    maxResults: number = 20,
+    period?: string,
+  ): Promise<SemanticSearchResult[]> {
+    const queryVector = await embedText(query);
+    const results = await import("./vector-store.js").then((m) =>
+      m.semanticSearch(queryVector, maxResults),
+    );
+
+    const resultsWithTimestamp: SemanticSearchResult[] = [];
+    for (const result of results) {
+      const fileContent = this.readFile(result.filePath);
+      let timestamp: string | undefined;
+
+      if (fileContent) {
+        const timestamps = extractTimestamps(fileContent);
+        if (timestamps.length > 0) {
+          timestamp = timestamps[0];
+        }
+      }
+
+      if (period) {
+        if (timestamp && !timestamp.startsWith(period.replace("-", "-"))) {
+          continue;
+        }
+      }
+
+      resultsWithTimestamp.push({
+        ...result,
+        timestamp,
+      });
+    }
+
+    return resultsWithTimestamp;
+  }
+
   listFiles(): ListResult {
     const root: string[] = [];
     const daily: string[] = [];
@@ -211,9 +334,7 @@ export class MemoryManager {
       for (const f of rootFiles) {
         if (f !== "BOOTSTRAP.md") root.push(f);
       }
-    } catch {
-      // Directory doesn't exist yet
-    }
+    } catch {}
 
     try {
       const dailyFiles = fs
@@ -222,10 +343,161 @@ export class MemoryManager {
         .sort()
         .reverse();
       daily.push(...dailyFiles);
-    } catch {
-      // Directory doesn't exist yet
-    }
+    } catch {}
 
     return { root, daily };
+  }
+
+  async embedAllExistingFiles(): Promise<void> {
+    const rootIndexExists = await import("./vector-store.js").then((m) =>
+      m.checkIndexExists("root"),
+    );
+    const dailyIndexExists = await import("./vector-store.js").then((m) =>
+      m.checkIndexExists("daily"),
+    );
+
+    const hasExistingIndex = rootIndexExists || dailyIndexExists;
+
+    if (hasExistingIndex) {
+      return;
+    }
+
+    const { root, daily } = this.listFiles();
+
+    const filesToEmbed: Array<{ filePath: string; content: string }> = [];
+
+    for (const file of root) {
+      const filePath = path.join(this.config.memoryDir, file);
+      const content = this.readFile(filePath);
+      if (content) {
+        filesToEmbed.push({ filePath, content });
+      }
+    }
+
+    for (const file of daily) {
+      const filePath = path.join(this.dailyDir, file);
+      const content = this.readFile(filePath);
+      if (content) {
+        filesToEmbed.push({ filePath, content });
+      }
+    }
+
+    for (const { filePath, content } of filesToEmbed) {
+      try {
+        await this.embedAndIndex(filePath, content);
+      } catch (err) {
+        console.error(
+          `[embedding] Failed to embed ${filePath}: ${(err as Error).message}`,
+        );
+      }
+    }
+  }
+
+  listFilesWithTimestamps(
+    limit: number = 7,
+  ): Array<{ name: string; timestamps: string[] }> {
+    const result: Array<{ name: string; timestamps: string[] }> = [];
+    const { root, daily } = this.listFiles();
+
+    for (const file of root) {
+      const filePath = path.join(this.config.memoryDir, file);
+      const content = this.readFile(filePath);
+      const timestamps = content ? extractTimestamps(content) : [];
+      result.push({ name: file, timestamps });
+    }
+
+    const recentDaily = daily.slice(0, limit);
+    const moreCount = daily.length - limit;
+
+    for (const file of recentDaily) {
+      const filePath = path.join(this.dailyDir, file);
+      const content = this.readFile(filePath);
+      const timestamps = content ? extractTimestamps(content) : [];
+      result.push({ name: `daily/${file}`, timestamps });
+    }
+
+    if (moreCount > 0) {
+      result.push({
+        name: `... and ${moreCount} more daily logs`,
+        timestamps: [],
+      });
+    }
+
+    return result;
+  }
+
+  listFilesGroupedByMonth(): {
+    root: Array<{ name: string; timestamps: string[] }>;
+    monthly: MonthGroup[];
+  } {
+    const { root, daily } = this.listFiles();
+
+    const rootFiles: Array<{ name: string; timestamps: string[] }> = [];
+    for (const file of root) {
+      const filePath = path.join(this.config.memoryDir, file);
+      const content = this.readFile(filePath);
+      const timestamps = content ? extractTimestamps(content) : [];
+      rootFiles.push({ name: file, timestamps });
+    }
+
+    const monthlyMap = new Map<
+      string,
+      Array<{ name: string; timestamps: string[] }>
+    >();
+
+    for (const file of daily) {
+      const dateStr = file.replace(".md", "");
+      const month = dateStr.slice(0, 7);
+      const filePath = path.join(this.dailyDir, file);
+      const content = this.readFile(filePath);
+      const timestamps = content ? extractTimestamps(content) : [];
+
+      if (!monthlyMap.has(month)) {
+        monthlyMap.set(month, []);
+      }
+      monthlyMap.get(month)!.push({ name: `daily/${file}`, timestamps });
+    }
+
+    const monthly: MonthGroup[] = [];
+    for (const [month, files] of monthlyMap.entries()) {
+      const entryCount = files.reduce((sum, f) => sum + f.timestamps.length, 0);
+      monthly.push({
+        month,
+        fileCount: files.length,
+        entryCount,
+        files,
+      });
+    }
+
+    monthly.sort((a, b) => b.month.localeCompare(a.month));
+
+    return { root: rootFiles, monthly };
+  }
+
+  listFilesByPeriod(
+    period: string,
+  ): Array<{ name: string; timestamps: string[] }> {
+    const { daily } = this.listFiles();
+    const result: Array<{ name: string; timestamps: string[] }> = [];
+
+    const filteredDaily = daily.filter((file) => {
+      const dateStr = file.replace(".md", "");
+      if (period.length === 7) {
+        return dateStr.startsWith(period);
+      }
+      if (period.length === 4) {
+        return dateStr.startsWith(period);
+      }
+      return false;
+    });
+
+    for (const file of filteredDaily) {
+      const filePath = path.join(this.dailyDir, file);
+      const content = this.readFile(filePath);
+      const timestamps = content ? extractTimestamps(content) : [];
+      result.push({ name: `daily/${file}`, timestamps });
+    }
+
+    return result;
   }
 }
