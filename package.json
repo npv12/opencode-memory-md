@@ -1,6 +1,6 @@
 {
-  "name": "@zhafron/opencode-memory-md",
-  "version": "1.2.0",
+  "name": "@npv12/opencode-memory-md",
+  "version": "1.0.0",
   "description": "Simple markdown-based memory plugin for OpenCode",
   "type": "module",
   "main": "dist/index.js",
@@ -19,11 +19,11 @@
     "memory",
     "markdown"
   ],
-  "author": "zhafron",
+  "author": "npv12",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zhafron/opencode-memory-md.git"
+    "url": "https://github.com/npv12/opencode-memory-md.git"
   },
   "publishConfig": {
     "access": "public"

@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@zhafron/opencode-memory-md",
+      "name": "@npv12/opencode-memory-md",
       "dependencies": {
         "@huggingface/transformers": "4.0.0-next.4",
         "@opencode-ai/plugin": "^1.2.6",

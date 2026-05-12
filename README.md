@@ -1,6 +1,8 @@
-# @zhafron/opencode-memory-md
+# @npv12/opencode-memory-md
 
 Simple markdown-based memory plugin for OpenCode.
+
+> **Attribution**: This project is a fork of [@zhafron/opencode-memory-md](https://github.com/tickernelz/opencode-memory-md). Thank you to the original author for the excellent foundation.
 
 ## Installation
 
@@ -8,7 +10,7 @@ Add to your OpenCode configuration at `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "plugin": ["@zhafron/opencode-memory-md"]
+  "plugin": ["@npv12/opencode-memory-md"]
 }
 ```
 
