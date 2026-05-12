@@ -1,6 +1,7 @@
 import { $ } from "bun";
-import * as path from "node:path";
 import * as fs from "node:fs";
+import * as path from "node:path";
+
 import { getMemoryDir } from "./config.js";
 
 export async function ensureGitRepo(): Promise<void> {
@@ -16,7 +17,7 @@ export async function ensureGitRepo(): Promise<void> {
         .quiet();
     } catch (err) {
       console.error(
-        `[git] Failed to initialize repo: ${(err as Error).message}`,
+        `[git] Failed to initialize repo: ${(err as Error).message}`
       );
     }
   }

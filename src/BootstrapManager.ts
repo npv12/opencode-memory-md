@@ -2,7 +2,7 @@ import { MemoryManager } from "./MemoryManager.js";
 import { MEMORY_AWARENESS_INSTRUCTIONS } from "./memoryInstructions.js";
 
 const BOOTSTRAP_TEMPLATE = (
-  bootstrapPath: string,
+  bootstrapPath: string
 ) => `# BOOTSTRAP.md - First Time Setup
 
 **IMPORTANT:** First setup must be done in OpenCode **build mode** (not plan mode). AI cannot write files in plan mode.
@@ -121,19 +121,19 @@ export class BootstrapManager {
     const bootstrapPath = this.memoryManager.getBootstrapPath();
     this.memoryManager.writeFile(
       bootstrapPath,
-      BOOTSTRAP_TEMPLATE(bootstrapPath),
+      BOOTSTRAP_TEMPLATE(bootstrapPath)
     );
     this.memoryManager.writeFile(
       this.memoryManager.getMemoryPath(),
-      MEMORY_TEMPLATE,
+      MEMORY_TEMPLATE
     );
     this.memoryManager.writeFile(
       this.memoryManager.getIdentityPath(),
-      IDENTITY_TEMPLATE,
+      IDENTITY_TEMPLATE
     );
     this.memoryManager.writeFile(
       this.memoryManager.getUserPath(),
-      USER_TEMPLATE,
+      USER_TEMPLATE
     );
   }
 

@@ -1,16 +1,17 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
-import { loadConfig } from "./config.js";
-import { MemoryManager } from "./MemoryManager.js";
+
 import { BootstrapManager } from "./BootstrapManager.js";
+import { MemoryManager } from "./MemoryManager.js";
+import { loadConfig } from "./config.js";
 import {
-  MEMORY_AWARENESS_INSTRUCTIONS,
   BOOTSTRAP_INSTRUCTIONS,
+  MEMORY_AWARENESS_INSTRUCTIONS,
 } from "./memoryInstructions.js";
 import {
   validateAction,
-  validateTarget,
   validateContent,
+  validateTarget,
   validateTimestamp,
 } from "./validation.js";
 
@@ -44,11 +45,11 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
     const sections: string[] = [];
     if (bootstrapManager.isBootstrapNeeded()) {
       const bootstrapContent = memoryManager.readFile(
-        memoryManager.getBootstrapPath(),
+        memoryManager.getBootstrapPath()
       );
       if (bootstrapContent?.trim()) {
         sections.push(
-          `## BOOTSTRAP.md (First Run Setup)\n\n${bootstrapContent.trim()}`,
+          `## BOOTSTRAP.md (First Run Setup)\n\n${bootstrapContent.trim()}`
         );
       }
     } else {
@@ -172,7 +173,7 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
             .string()
             .optional()
             .describe(
-              "Date (YYYY-MM-DD) or timestamp (YYYY-MM-DD HH:MM:SS) for daily target",
+              "Date (YYYY-MM-DD) or timestamp (YYYY-MM-DD HH:MM:SS) for daily target"
             ),
           query: tool.schema
             .string()
@@ -186,7 +187,7 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
             .string()
             .optional()
             .describe(
-              "Text to replace (for edit action). Must read file first to get exact text.",
+              "Text to replace (for edit action). Must read file first to get exact text."
             ),
           newString: tool.schema
             .string()
@@ -196,13 +197,13 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
             .string()
             .optional()
             .describe(
-              "Timestamp to delete (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS). For delete action only.",
+              "Timestamp to delete (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS). For delete action only."
             ),
           period: tool.schema
             .string()
             .optional()
             .describe(
-              "Filter by period: YYYY-MM (month) or YYYY (year). For list and search actions.",
+              "Filter by period: YYYY-MM (month) or YYYY (year). For list and search actions."
             ),
         },
         async execute(args) {
@@ -233,7 +234,7 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
 
 function handleRead(
   params: { target?: string; date?: string },
-  memoryManager: MemoryManager,
+  memoryManager: MemoryManager
 ): string {
   const { target, date } = params;
 
@@ -244,7 +245,7 @@ function handleRead(
   try {
     const { filePath, displayName } = memoryManager.getPathForTarget(
       target,
-      date,
+      date
     );
     const content = memoryManager.readFile(filePath);
     if (!content) {
@@ -258,7 +259,7 @@ function handleRead(
 
 async function handleWrite(
   params: { target?: string; content?: string; mode?: string; date?: string },
-  memoryManager: MemoryManager,
+  memoryManager: MemoryManager
 ): Promise<string> {
   const { target, content, mode, date } = params;
 
@@ -276,7 +277,7 @@ async function handleWrite(
   try {
     const { filePath, displayName } = memoryManager.getPathForTarget(
       target,
-      date,
+      date
     );
 
     const timestamp = memoryManager.getLocalTimestamp();
@@ -310,7 +311,7 @@ async function handleEdit(
     newString?: string;
     date?: string;
   },
-  memoryManager: MemoryManager,
+  memoryManager: MemoryManager
 ): Promise<string> {
   const { target, oldString, newString, date } = params;
 
@@ -329,7 +330,7 @@ async function handleEdit(
   try {
     const { filePath, displayName } = memoryManager.getPathForTarget(
       target,
-      date,
+      date
     );
     await memoryManager.editFile(filePath, oldString, newString);
     const timestamp = memoryManager.getLocalTimestamp();
@@ -341,7 +342,7 @@ async function handleEdit(
 
 async function handleDelete(
   params: { target?: string; timestamp?: string; date?: string },
-  memoryManager: MemoryManager,
+  memoryManager: MemoryManager
 ): Promise<string> {
   const { target, timestamp, date } = params;
 
@@ -360,7 +361,7 @@ async function handleDelete(
     const result = await memoryManager.deleteByTimestamp(
       target,
       timestamp,
-      date,
+      date
     );
     return `${result}\n\nDeleted timestamp: ${timestamp}`;
   } catch (error) {
@@ -372,7 +373,7 @@ async function handleDelete(
 
 async function handleSearch(
   params: { query?: string; max_results?: number; period?: string },
-  memoryManager: MemoryManager,
+  memoryManager: MemoryManager
 ): Promise<string> {
   const { query, max_results, period } = params;
 
@@ -384,7 +385,7 @@ async function handleSearch(
     const results = await memoryManager.semanticSearch(
       query,
       max_results ?? 20,
-      period,
+      period
     );
 
     if (results.length === 0) {
@@ -409,7 +410,7 @@ async function handleSearch(
 
 function handleList(
   params: { period?: string },
-  memoryManager: MemoryManager,
+  memoryManager: MemoryManager
 ): string {
   const { period } = params;
 
@@ -481,10 +482,10 @@ function handleList(
   }
 
   parts.push(
-    "\nUse memory_list({period: 'YYYY-MM'}) to see details for specific month.",
+    "\nUse memory_list({period: 'YYYY-MM'}) to see details for specific month."
   );
   parts.push(
-    "Use memory_list({period: 'YYYY'}) to see all daily logs for specific year.",
+    "Use memory_list({period: 'YYYY'}) to see all daily logs for specific year."
   );
 
   return parts.join("\n");

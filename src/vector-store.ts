@@ -1,5 +1,6 @@
-import { LocalIndex } from "vectra";
 import * as path from "node:path";
+import { LocalIndex } from "vectra";
+
 import { getMemoryDir } from "./config.js";
 
 let rootIndex: LocalIndex | null = null;
@@ -40,7 +41,7 @@ export interface EmbeddedChunk {
 
 export async function upsertFile(
   filePath: string,
-  chunks: EmbeddedChunk[],
+  chunks: EmbeddedChunk[]
 ): Promise<void> {
   const index = filePath.includes("/daily/")
     ? await getDailyIndex()
@@ -89,7 +90,7 @@ export interface SearchResult {
 
 export async function semanticSearch(
   queryVector: number[],
-  topK: number = 20,
+  topK: number = 20
 ): Promise<SearchResult[]> {
   const results: SearchResult[] = [];
 
@@ -137,7 +138,7 @@ export async function deleteFileVectors(filePath: string): Promise<void> {
 }
 
 export async function checkIndexExists(
-  type: "root" | "daily",
+  type: "root" | "daily"
 ): Promise<boolean> {
   const index = type === "root" ? await getRootIndex() : await getDailyIndex();
   const items = await index.listItems();

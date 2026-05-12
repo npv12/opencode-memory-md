@@ -1,10 +1,10 @@
-process.env.TRANSFORMERS_VERBOSITY = "error";
-process.env.ORT_LOGGING_LEVEL = "error";
-
 import { pipeline } from "@huggingface/transformers";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+
+process.env.TRANSFORMERS_VERBOSITY = "error";
+process.env.ORT_LOGGING_LEVEL = "error";
 
 let embedder: any = null;
 let initPromise: Promise<void> | null = null;
@@ -16,7 +16,7 @@ function getModelCachePath(): string {
     "node_modules",
     "@huggingface",
     "transformers",
-    ".cache",
+    ".cache"
   );
 }
 
@@ -27,7 +27,7 @@ function isModelCacheValid(): boolean {
     "nomic-ai",
     "nomic-embed-text-v1.5",
     "onnx",
-    "model.onnx",
+    "model.onnx"
   );
 
   if (!fs.existsSync(modelPath)) {
@@ -70,7 +70,7 @@ export async function initEmbedder(): Promise<void> {
             "nomic-ai/nomic-embed-text-v1.5",
             {
               dtype: "fp32",
-            },
+            }
           );
           return;
         } catch (err) {
@@ -84,7 +84,7 @@ export async function initEmbedder(): Promise<void> {
             if (retries > maxRetries) {
               throw new Error(
                 `Failed to load embedding model after ${maxRetries} retries. ` +
-                  `Model cache may be corrupted. Try: rm -rf node_modules/@huggingface/transformers/.cache`,
+                  `Model cache may be corrupted. Try: rm -rf node_modules/@huggingface/transformers/.cache`
               );
             }
             continue;

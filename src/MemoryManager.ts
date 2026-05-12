@@ -1,29 +1,30 @@
-import * as path from "node:path";
 import * as fs from "node:fs";
-import type {
-  MemoryConfig,
-  SearchResult,
-  ListResult,
-  ContextFile,
-  TimestampEntry,
-  SemanticSearchResult,
-  MonthGroup,
-} from "./types.js";
-import { ensureDir, getMemoryDir } from "./config.js";
+import * as path from "node:path";
+
 import { atomicWrite } from "./atomicWrite.js";
-import { checkLineLimit } from "./validation.js";
-import { gitCommit } from "./git.js";
-import { embedText } from "./embedding.js";
 import { chunkMarkdown } from "./chunker.js";
+import { ensureDir, getMemoryDir } from "./config.js";
+import { embedText } from "./embedding.js";
+import { gitCommit } from "./git.js";
 import {
-  upsertFile,
-  deleteFileVectors,
-  type SearchResult as VectorSearchResult,
-} from "./vector-store.js";
-import {
-  parseContentByTimestamp,
   extractTimestamps,
+  parseContentByTimestamp,
 } from "./timestampParser.js";
+import type {
+  ContextFile,
+  ListResult,
+  MemoryConfig,
+  MonthGroup,
+  SearchResult,
+  SemanticSearchResult,
+  TimestampEntry,
+} from "./types.js";
+import { checkLineLimit } from "./validation.js";
+import {
+  type SearchResult as VectorSearchResult,
+  deleteFileVectors,
+  upsertFile,
+} from "./vector-store.js";
 
 export class MemoryManager {
   private config: MemoryConfig;
@@ -61,7 +62,7 @@ export class MemoryManager {
 
   getPathForTarget(
     target: string,
-    date?: string,
+    date?: string
   ): { filePath: string; displayName: string } {
     switch (target) {
       case "memory":
@@ -104,7 +105,7 @@ export class MemoryManager {
   async editFile(
     filePath: string,
     oldString: string,
-    newString: string,
+    newString: string
   ): Promise<void> {
     const content = this.readFile(filePath);
     if (!content) {
@@ -118,7 +119,7 @@ export class MemoryManager {
     const matches = content.split(oldString).length - 1;
     if (matches > 1) {
       throw new Error(
-        `Found ${matches} occurrences of oldString, expected exactly 1`,
+        `Found ${matches} occurrences of oldString, expected exactly 1`
       );
     }
 
@@ -131,7 +132,7 @@ export class MemoryManager {
   async deleteByTimestamp(
     target: string,
     timestamp: string,
-    date?: string,
+    date?: string
   ): Promise<string> {
     const { filePath, displayName } = this.getPathForTarget(target, date);
     const content = this.readFile(filePath);
@@ -142,7 +143,7 @@ export class MemoryManager {
 
     const entries = parseContentByTimestamp(content);
     const filteredEntries = entries.filter(
-      (entry) => entry.timestamp !== timestamp,
+      (entry) => entry.timestamp !== timestamp
     );
 
     if (filteredEntries.length === entries.length) {
@@ -180,7 +181,7 @@ export class MemoryManager {
 
   private async embedAndIndex(
     filePath: string,
-    content: string,
+    content: string
   ): Promise<void> {
     try {
       const chunks = chunkMarkdown(content, filePath);
@@ -193,7 +194,7 @@ export class MemoryManager {
             text: chunk.text,
             hash: chunk.hash,
           },
-        })),
+        }))
       );
       await upsertFile(filePath, embedded);
     } catch (err) {
@@ -288,11 +289,11 @@ export class MemoryManager {
   async semanticSearch(
     query: string,
     maxResults: number = 20,
-    period?: string,
+    period?: string
   ): Promise<SemanticSearchResult[]> {
     const queryVector = await embedText(query);
     const results = await import("./vector-store.js").then((m) =>
-      m.semanticSearch(queryVector, maxResults),
+      m.semanticSearch(queryVector, maxResults)
     );
 
     const resultsWithTimestamp: SemanticSearchResult[] = [];
@@ -350,10 +351,10 @@ export class MemoryManager {
 
   async embedAllExistingFiles(): Promise<void> {
     const rootIndexExists = await import("./vector-store.js").then((m) =>
-      m.checkIndexExists("root"),
+      m.checkIndexExists("root")
     );
     const dailyIndexExists = await import("./vector-store.js").then((m) =>
-      m.checkIndexExists("daily"),
+      m.checkIndexExists("daily")
     );
 
     const hasExistingIndex = rootIndexExists || dailyIndexExists;
@@ -387,14 +388,14 @@ export class MemoryManager {
         await this.embedAndIndex(filePath, content);
       } catch (err) {
         console.error(
-          `[embedding] Failed to embed ${filePath}: ${(err as Error).message}`,
+          `[embedding] Failed to embed ${filePath}: ${(err as Error).message}`
         );
       }
     }
   }
 
   listFilesWithTimestamps(
-    limit: number = 7,
+    limit: number = 7
   ): Array<{ name: string; timestamps: string[] }> {
     const result: Array<{ name: string; timestamps: string[] }> = [];
     const { root, daily } = this.listFiles();
@@ -475,7 +476,7 @@ export class MemoryManager {
   }
 
   listFilesByPeriod(
-    period: string,
+    period: string
   ): Array<{ name: string; timestamps: string[] }> {
     const { daily } = this.listFiles();
     const result: Array<{ name: string; timestamps: string[] }> = [];
