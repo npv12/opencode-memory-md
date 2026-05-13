@@ -8,21 +8,13 @@ import {
   BOOTSTRAP_INSTRUCTIONS,
   MEMORY_AWARENESS_INSTRUCTIONS,
 } from "./memoryInstructions.js";
+import type { SessionState } from "./types.js";
 import {
   validateAction,
   validateContent,
   validateTarget,
   validateTimestamp,
 } from "./validation.js";
-
-interface SessionState {
-  memoryOperations: Array<{
-    action: string;
-    target: string;
-    timestamp: string;
-  }>;
-  lastDailyUpdate: string | null;
-}
 
 const sessionStates = new Map<string, SessionState>();
 
@@ -35,10 +27,16 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
 
   memoryManager.ensureDirectories();
 
+  // Initialize embedding in background - failures are logged but don't block startup
   (async () => {
     try {
       await memoryManager.embedAllExistingFiles();
-    } catch (err) {}
+    } catch (err) {
+      console.error(
+        "[memory] Failed to embed existing files:",
+        (err as Error).message
+      );
+    }
   })();
 
   const buildContext = (): string => {
@@ -146,6 +144,7 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
           "- `memory`: MEMORY.md - Long-term memory (crucial decisions, architecture, patterns) - **explicit only**",
           "- `identity`: IDENTITY.md - AI identity (name, persona, behavioral rules)",
           "- `user`: USER.md - User profile (name, preferences, context)",
+          "- `project`: project/{folder-name}.md - Project knowledge: features, capabilities, patterns, mistakes, conventions",
           "",
           "**Important:**",
           "- **DEFAULT to daily logs** for task summaries unless user explicitly requests memory.md",
@@ -158,9 +157,9 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
             .enum(["read", "write", "edit", "delete", "search", "list"])
             .describe("Action to perform"),
           target: tool.schema
-            .enum(["memory", "identity", "user", "daily"])
+            .enum(["memory", "identity", "user", "daily", "project"])
             .optional()
-            .describe("Target file: memory, identity, user, or daily"),
+            .describe("Target file: memory, identity, user, daily, or project"),
           content: tool.schema
             .string()
             .optional()
@@ -258,10 +257,16 @@ function handleRead(
 }
 
 async function handleWrite(
-  params: { target?: string; content?: string; mode?: string; date?: string },
+  params: {
+    target?: string;
+    content?: string;
+    mode?: string;
+    date?: string;
+    projectName?: string;
+  },
   memoryManager: MemoryManager
 ): Promise<string> {
-  const { target, content, mode, date } = params;
+  const { target, content, mode, date, projectName } = params;
 
   if (!content) {
     return "Error: content is required for write action.";
@@ -277,13 +282,14 @@ async function handleWrite(
   try {
     const { filePath, displayName } = memoryManager.getPathForTarget(
       target,
-      date
+      date,
+      projectName
     );
 
     const timestamp = memoryManager.getLocalTimestamp();
 
     if (mode === "overwrite") {
-      await memoryManager.writeFile(filePath, content);
+      memoryManager.writeFile(filePath, content);
     } else {
       memoryManager.appendFile(filePath, content);
     }
@@ -310,10 +316,11 @@ async function handleEdit(
     oldString?: string;
     newString?: string;
     date?: string;
+    projectName?: string;
   },
   memoryManager: MemoryManager
 ): Promise<string> {
-  const { target, oldString, newString, date } = params;
+  const { target, oldString, newString, date, projectName } = params;
 
   if (!target) {
     return "Error: target is required for edit action.";
@@ -330,9 +337,10 @@ async function handleEdit(
   try {
     const { filePath, displayName } = memoryManager.getPathForTarget(
       target,
-      date
+      date,
+      projectName
     );
-    await memoryManager.editFile(filePath, oldString, newString);
+    memoryManager.editFile(filePath, oldString, newString);
     const timestamp = memoryManager.getLocalTimestamp();
     return `Edited ${displayName}\n\nTimestamp: ${timestamp}`;
   } catch (error) {
@@ -341,10 +349,15 @@ async function handleEdit(
 }
 
 async function handleDelete(
-  params: { target?: string; timestamp?: string; date?: string },
+  params: {
+    target?: string;
+    timestamp?: string;
+    date?: string;
+    projectName?: string;
+  },
   memoryManager: MemoryManager
 ): Promise<string> {
-  const { target, timestamp, date } = params;
+  const { target, timestamp, date, projectName } = params;
 
   if (!target) {
     return "Error: target is required for delete action.";
@@ -361,7 +374,8 @@ async function handleDelete(
     const result = await memoryManager.deleteByTimestamp(
       target,
       timestamp,
-      date
+      date,
+      projectName
     );
     return `${result}\n\nDeleted timestamp: ${timestamp}`;
   } catch (error) {
@@ -397,15 +411,41 @@ async function handleSearch(
       .map((r) => {
         const ts = r.timestamp ? `[${r.timestamp}]` : "[no timestamp]";
         const heading = r.heading ? ` (${r.heading})` : "";
-        return `${ts} ${r.filePath}${heading}:${r.score.toFixed(4)}: ${r.text.slice(0, 200)}`;
+        const score = r.score.toFixed(4);
+        const preview = r.text.slice(0, 200);
+        return `${ts} ${r.filePath}${heading}:${score}: ${preview}`;
       })
       .join("\n\n");
 
     const periodMsg = period ? ` (filtered by period: ${period})` : "";
     return `Found ${results.length} results${periodMsg}:\n\n${output}`;
   } catch (error) {
-    throw error;
+    return error instanceof Error
+      ? error.message
+      : `Search failed for query: ${query}`;
   }
+}
+
+interface FileWithTimestamps {
+  name: string;
+  timestamps: string[];
+}
+
+function formatFileEntry(f: FileWithTimestamps): string {
+  const count = f.timestamps.length;
+  const recentTs = f.timestamps.slice(0, 3);
+  const more = count > 3 ? `\n    ... and ${count - 3} more` : "";
+  const tsList = recentTs.map((ts) => `    - ${ts}`).join("\n");
+  return `- ${f.name} (${count} entries):\n${tsList}${more}`;
+}
+
+function formatFileSection(
+  files: FileWithTimestamps[],
+  sectionName: string
+): string | null {
+  const filesWithEntries = files.filter((f) => f.timestamps.length > 0);
+  if (filesWithEntries.length === 0) return null;
+  return `${sectionName}:\n${filesWithEntries.map(formatFileEntry).join("\n")}`;
 }
 
 function handleList(
@@ -436,22 +476,11 @@ function handleList(
   const grouped = memoryManager.listFilesGroupedByMonth();
   const parts: string[] = [];
 
-  if (
-    grouped.root.length > 0 &&
-    grouped.root.some((f) => f.timestamps.length > 0)
-  ) {
-    const rootContent = grouped.root
-      .filter((f) => f.timestamps.length > 0)
-      .map((f) => {
-        const count = f.timestamps.length;
-        const recentTs = f.timestamps.slice(0, 3);
-        const more = count > 3 ? `... and ${count - 3} more` : "";
-        const tsList = recentTs.map((ts) => `    - ${ts}`).join("\n");
-        return `- ${f.name} (${count} entries):\n${tsList}${more ? `\n    ${more}` : ""}`;
-      })
-      .join("\n");
-    parts.push(`Root files:\n${rootContent}`);
-  }
+  const rootSection = formatFileSection(grouped.root, "Root files");
+  if (rootSection) parts.push(rootSection);
+
+  const projectSection = formatFileSection(grouped.project, "Project files");
+  if (projectSection) parts.push(projectSection);
 
   if (grouped.monthly.length > 0) {
     const displayMonthly = grouped.monthly.slice(0, 6);
@@ -462,10 +491,7 @@ function handleList(
         const recentFiles = m.files.slice(0, 3);
         const moreFiles = m.files.length - 3;
         const filesList = recentFiles
-          .map((f) => {
-            const count = f.timestamps.length;
-            return `    - ${f.name} (${count} entries)`;
-          })
+          .map((f) => `    - ${f.name} (${f.timestamps.length} entries)`)
           .join("\n");
         const moreFilesText =
           moreFiles > 0 ? `\n    ... and ${moreFiles} more files` : "";

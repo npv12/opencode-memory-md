@@ -12,6 +12,19 @@ export function getMemoryDir(): string {
   return path.join(home, ".config", "opencode", "memory");
 }
 
+export function getProjectDir(memoryDir: string): string {
+  return path.join(memoryDir, "project");
+}
+
+export function getCurrentProjectName(): string | null {
+  try {
+    const cwd = process.cwd();
+    return path.basename(cwd);
+  } catch {
+    return null;
+  }
+}
+
 export function resolvePath(filePath: string): string {
   if (filePath.startsWith("~")) {
     return path.join(os.homedir(), filePath.slice(1));
@@ -24,7 +37,9 @@ export function resolvePath(filePath: string): string {
 
 export function loadConfig(): MemoryConfig {
   const memoryDir = getMemoryDir();
-  return { memoryDir };
+  const projectDir = getProjectDir(memoryDir);
+  const currentProjectName = getCurrentProjectName();
+  return { memoryDir, projectDir, currentProjectName };
 }
 
 export function ensureDir(dir: string): void {

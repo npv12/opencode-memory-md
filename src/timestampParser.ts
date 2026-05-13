@@ -35,10 +35,3 @@ export function extractTimestamps(content: string): string[] {
 
   return timestamps;
 }
-
-export function formatTimestampForDisplay(timestamp: string): string {
-  if (timestamp.includes(" ")) {
-    return timestamp;
-  }
-  return `${timestamp} 00:00:00`;
-}

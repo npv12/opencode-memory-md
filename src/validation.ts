@@ -1,4 +1,4 @@
-const VALID_TARGETS = ["memory", "identity", "user", "daily", "bootstrap"];
+const VALID_TARGETS = ["memory", "identity", "user", "daily", "project"];
 const VALID_ACTIONS = ["read", "write", "edit", "delete", "search", "list"];
 const MAX_CONTENT_SIZE = 100 * 1024;
 const MAX_MEMORY_LINES = 1000;
@@ -30,22 +30,14 @@ export function validateContent(content: string): void {
   }
 }
 
-export function validateTimestamp(timestamp: string): void {
-  const fullRegex = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
-  const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+const TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/;
 
-  if (!fullRegex.test(timestamp) && !dateRegex.test(timestamp)) {
+export function validateTimestamp(timestamp: string): void {
+  if (!TIMESTAMP_REGEX.test(timestamp)) {
     throw new Error(
       `Invalid timestamp format: ${timestamp}. Must be YYYY-MM-DD or YYYY-MM-DD HH:MM:SS`
     );
   }
-}
-
-export function validateTimestampOrDate(value: string): void {
-  if (!value) {
-    throw new Error("Timestamp or date is required");
-  }
-  validateTimestamp(value);
 }
 
 export function checkLineLimit(filePath: string, content: string): void {

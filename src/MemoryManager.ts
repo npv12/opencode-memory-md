@@ -12,32 +12,45 @@ import {
 } from "./timestampParser.js";
 import type {
   ContextFile,
-  ListResult,
+  FileEntry,
+  GroupedFiles,
   MemoryConfig,
   MonthGroup,
-  SearchResult,
   SemanticSearchResult,
-  TimestampEntry,
 } from "./types.js";
 import { checkLineLimit } from "./validation.js";
-import {
-  type SearchResult as VectorSearchResult,
-  deleteFileVectors,
-  upsertFile,
-} from "./vector-store.js";
+import { upsertFile } from "./vector-store.js";
+
+interface FileList {
+  root: string[];
+  daily: string[];
+  project: string[];
+}
 
 export class MemoryManager {
   private config: MemoryConfig;
   private dailyDir: string;
+  private projectDir: string;
 
   constructor(config: MemoryConfig) {
     this.config = config;
     this.dailyDir = path.join(config.memoryDir, "daily");
+    this.projectDir =
+      config.projectDir || path.join(config.memoryDir, "project");
   }
 
   ensureDirectories(): void {
     ensureDir(this.config.memoryDir);
     ensureDir(this.dailyDir);
+    ensureDir(this.projectDir);
+  }
+
+  getCurrentProjectName(): string | null {
+    return this.config.currentProjectName || null;
+  }
+
+  getProjectPath(projectName: string): string {
+    return path.join(this.projectDir, `${projectName}.md`);
   }
 
   getMemoryPath(): string {
@@ -62,7 +75,8 @@ export class MemoryManager {
 
   getPathForTarget(
     target: string,
-    date?: string
+    date?: string,
+    projectName?: string
   ): { filePath: string; displayName: string } {
     switch (target) {
       case "memory":
@@ -76,6 +90,18 @@ export class MemoryManager {
         return {
           filePath: this.getDailyPath(targetDate),
           displayName: `daily/${targetDate}.md`,
+        };
+      }
+      case "project": {
+        const targetProject = projectName ?? this.getCurrentProjectName();
+        if (!targetProject) {
+          throw new Error(
+            "Project name not available. Set current working directory or provide project name."
+          );
+        }
+        return {
+          filePath: this.getProjectPath(targetProject),
+          displayName: `project/${targetProject}.md`,
         };
       }
       default:
@@ -95,18 +121,20 @@ export class MemoryManager {
     }
   }
 
-  async writeFile(filePath: string, content: string): Promise<void> {
+  writeFile(filePath: string, content: string): void {
     checkLineLimit(filePath, content);
     atomicWrite(filePath, content);
-    await this.embedAndIndex(filePath, content);
-    await gitCommit(`Update ${path.basename(filePath)}`);
+    gitCommit(`Update ${path.basename(filePath)}`);
+
+    // Trigger background embedding - don't await, let it run in background
+    this.embedAndIndex(filePath, content).catch((err) => {
+      console.error(
+        `[embedding] Background embed failed for ${filePath}: ${(err as Error).message}`
+      );
+    });
   }
 
-  async editFile(
-    filePath: string,
-    oldString: string,
-    newString: string
-  ): Promise<void> {
+  editFile(filePath: string, oldString: string, newString: string): void {
     const content = this.readFile(filePath);
     if (!content) {
       throw new Error("File not found or empty");
@@ -125,16 +153,28 @@ export class MemoryManager {
 
     const updatedContent = content.replace(oldString, newString);
     atomicWrite(filePath, updatedContent);
-    await this.embedAndIndex(filePath, updatedContent);
-    await gitCommit(`Edit ${path.basename(filePath)}`);
+    gitCommit(`Edit ${path.basename(filePath)}`);
+
+    // Trigger background embedding - don't await, let it run in background
+    const finalContent = updatedContent;
+    this.embedAndIndex(filePath, finalContent).catch((err) => {
+      console.error(
+        `[embedding] Background embed failed for ${filePath}: ${(err as Error).message}`
+      );
+    });
   }
 
   async deleteByTimestamp(
     target: string,
     timestamp: string,
-    date?: string
+    date?: string,
+    projectName?: string
   ): Promise<string> {
-    const { filePath, displayName } = this.getPathForTarget(target, date);
+    const { filePath, displayName } = this.getPathForTarget(
+      target,
+      date,
+      projectName
+    );
     const content = this.readFile(filePath);
 
     if (!content) {
@@ -155,8 +195,14 @@ export class MemoryManager {
       .join("\n\n");
 
     atomicWrite(filePath, newContent);
-    await this.embedAndIndex(filePath, newContent);
-    await gitCommit(`Delete entries from ${path.basename(filePath)}`);
+    gitCommit(`Delete entries from ${path.basename(filePath)}`);
+
+    // Trigger background embedding - don't await, let it run in background
+    this.embedAndIndex(filePath, newContent).catch((err) => {
+      console.error(
+        `[embedding] Background embed failed for ${filePath}: ${(err as Error).message}`
+      );
+    });
 
     return `Deleted ${entries.length - filteredEntries.length} entries from ${displayName}`;
   }
@@ -171,6 +217,14 @@ export class MemoryManager {
     checkLineLimit(filePath, newContent);
     atomicWrite(filePath, newContent);
     gitCommit(`Append to ${path.basename(filePath)}`);
+
+    // Trigger background embedding - don't await, let it run in background
+    const finalContent = newContent;
+    this.embedAndIndex(filePath, finalContent).catch((err) => {
+      console.error(
+        `[embedding] Background embed failed for ${filePath}: ${(err as Error).message}`
+      );
+    });
   }
 
   getLocalTimestamp(): string {
@@ -185,33 +239,11 @@ export class MemoryManager {
   ): Promise<void> {
     try {
       const chunks = chunkMarkdown(content, filePath);
-      const embedded = await Promise.all(
-        chunks.map(async (chunk) => ({
-          vector: await embedText(chunk.text),
-          metadata: {
-            filePath,
-            heading: chunk.heading,
-            text: chunk.text,
-            hash: chunk.hash,
-          },
-        }))
-      );
-      await upsertFile(filePath, embedded);
+      await upsertFile(filePath, chunks);
     } catch (err) {
       const errMsg = (err as Error).message;
       if (!errMsg.includes("not initialized")) {
         throw err;
-      }
-    }
-  }
-
-  deleteFile(filePath: string): void {
-    try {
-      fs.unlinkSync(filePath);
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code !== "ENOENT") {
-        throw error;
       }
     }
   }
@@ -230,60 +262,19 @@ export class MemoryManager {
 
   getContextFiles(): ContextFile[] {
     const files: ContextFile[] = [];
-    const memoryContent = this.readFile(this.getMemoryPath());
-    if (memoryContent?.trim()) {
-      files.push({ name: "MEMORY.md", content: memoryContent.trim() });
-    }
-    const identityContent = this.readFile(this.getIdentityPath());
-    if (identityContent?.trim()) {
-      files.push({ name: "IDENTITY.md", content: identityContent.trim() });
-    }
-    const userContent = this.readFile(this.getUserPath());
-    if (userContent?.trim()) {
-      files.push({ name: "USER.md", content: userContent.trim() });
-    }
-    return files;
-  }
-
-  searchFiles(query: string, maxResults: number): SearchResult[] {
-    const results: SearchResult[] = [];
-    const needle = query.toLowerCase();
-    const searchPaths = [
-      { dir: this.config.memoryDir, prefix: "" },
-      { dir: this.dailyDir, prefix: "daily" },
+    const paths = [
+      { path: this.getMemoryPath(), name: "MEMORY.md" },
+      { path: this.getIdentityPath(), name: "IDENTITY.md" },
+      { path: this.getUserPath(), name: "USER.md" },
     ];
 
-    for (const { dir, prefix } of searchPaths) {
-      if (results.length >= maxResults) break;
-      try {
-        const files = fs
-          .readdirSync(dir)
-          .filter((f) => f.endsWith(".md") && f !== "BOOTSTRAP.md");
-        for (const file of files) {
-          if (results.length >= maxResults) break;
-          const filePath = path.join(dir, file);
-          const content = this.readFile(filePath);
-          if (!content) continue;
-          const lines = content.split("\n");
-          for (
-            let i = 0;
-            i < lines.length && results.length < maxResults;
-            i++
-          ) {
-            if (lines[i].toLowerCase().includes(needle)) {
-              results.push({
-                file: prefix ? `${prefix}/${file}` : file,
-                line: i + 1,
-                text: lines[i].trimEnd(),
-              });
-            }
-          }
-        }
-      } catch {
-        continue;
+    for (const { path: filePath, name } of paths) {
+      const content = this.readFile(filePath);
+      if (content?.trim()) {
+        files.push({ name, content: content.trim() });
       }
     }
-    return results;
+    return files;
   }
 
   async semanticSearch(
@@ -323,65 +314,54 @@ export class MemoryManager {
     return resultsWithTimestamp;
   }
 
-  listFiles(): ListResult {
-    const root: string[] = [];
-    const daily: string[] = [];
-
+  private readDirFiles(dir: string): string[] {
     try {
-      const rootFiles = fs
-        .readdirSync(this.config.memoryDir)
-        .filter((f) => f.endsWith(".md"))
-        .sort();
-      for (const f of rootFiles) {
-        if (f !== "BOOTSTRAP.md") root.push(f);
-      }
-    } catch {}
+      return fs.readdirSync(dir).filter((f) => f.endsWith(".md"));
+    } catch {
+      return [];
+    }
+  }
 
-    try {
-      const dailyFiles = fs
-        .readdirSync(this.dailyDir)
-        .filter((f) => f.endsWith(".md"))
-        .sort()
-        .reverse();
-      daily.push(...dailyFiles);
-    } catch {}
+  listFiles(): FileList {
+    return {
+      root: this.readDirFiles(this.config.memoryDir).filter(
+        (f) => f !== "BOOTSTRAP.md"
+      ),
+      daily: this.readDirFiles(this.dailyDir),
+      project: this.readDirFiles(this.projectDir),
+    };
+  }
 
-    return { root, daily };
+  private async checkAnyIndexExists(): Promise<boolean> {
+    const { checkIndexExists } = await import("./vector-store.js");
+    // Sequential checks to avoid Bun NAPI concurrency issues
+    if (await checkIndexExists("root")) return true;
+    if (await checkIndexExists("daily")) return true;
+    if (await checkIndexExists("project")) return true;
+    return false;
   }
 
   async embedAllExistingFiles(): Promise<void> {
-    const rootIndexExists = await import("./vector-store.js").then((m) =>
-      m.checkIndexExists("root")
-    );
-    const dailyIndexExists = await import("./vector-store.js").then((m) =>
-      m.checkIndexExists("daily")
-    );
-
-    const hasExistingIndex = rootIndexExists || dailyIndexExists;
-
-    if (hasExistingIndex) {
+    if (await this.checkAnyIndexExists()) {
       return;
     }
 
-    const { root, daily } = this.listFiles();
-
+    const { root, daily, project } = this.listFiles();
     const filesToEmbed: Array<{ filePath: string; content: string }> = [];
 
-    for (const file of root) {
-      const filePath = path.join(this.config.memoryDir, file);
-      const content = this.readFile(filePath);
-      if (content) {
-        filesToEmbed.push({ filePath, content });
+    const collectFiles = (files: string[], dir: string) => {
+      for (const file of files) {
+        const filePath = path.join(dir, file);
+        const content = this.readFile(filePath);
+        if (content) {
+          filesToEmbed.push({ filePath, content });
+        }
       }
-    }
+    };
 
-    for (const file of daily) {
-      const filePath = path.join(this.dailyDir, file);
-      const content = this.readFile(filePath);
-      if (content) {
-        filesToEmbed.push({ filePath, content });
-      }
-    }
+    collectFiles(root, this.config.memoryDir);
+    collectFiles(daily, this.dailyDir);
+    collectFiles(project, this.projectDir);
 
     for (const { filePath, content } of filesToEmbed) {
       try {
@@ -394,71 +374,48 @@ export class MemoryManager {
     }
   }
 
-  listFilesWithTimestamps(
-    limit: number = 7
-  ): Array<{ name: string; timestamps: string[] }> {
-    const result: Array<{ name: string; timestamps: string[] }> = [];
-    const { root, daily } = this.listFiles();
-
-    for (const file of root) {
-      const filePath = path.join(this.config.memoryDir, file);
-      const content = this.readFile(filePath);
-      const timestamps = content ? extractTimestamps(content) : [];
-      result.push({ name: file, timestamps });
-    }
-
-    const recentDaily = daily.slice(0, limit);
-    const moreCount = daily.length - limit;
-
-    for (const file of recentDaily) {
-      const filePath = path.join(this.dailyDir, file);
-      const content = this.readFile(filePath);
-      const timestamps = content ? extractTimestamps(content) : [];
-      result.push({ name: `daily/${file}`, timestamps });
-    }
-
-    if (moreCount > 0) {
-      result.push({
-        name: `... and ${moreCount} more daily logs`,
-        timestamps: [],
-      });
-    }
-
-    return result;
+  private createFileEntry(
+    fileName: string,
+    filePath: string,
+    prefix: string = ""
+  ): FileEntry {
+    const content = this.readFile(filePath);
+    const timestamps = content ? extractTimestamps(content) : [];
+    return { name: prefix ? `${prefix}/${fileName}` : fileName, timestamps };
   }
 
-  listFilesGroupedByMonth(): {
-    root: Array<{ name: string; timestamps: string[] }>;
-    monthly: MonthGroup[];
-  } {
-    const { root, daily } = this.listFiles();
+  listFilesGroupedByMonth(): GroupedFiles {
+    const { root, daily, project } = this.listFiles();
 
-    const rootFiles: Array<{ name: string; timestamps: string[] }> = [];
-    for (const file of root) {
-      const filePath = path.join(this.config.memoryDir, file);
-      const content = this.readFile(filePath);
-      const timestamps = content ? extractTimestamps(content) : [];
-      rootFiles.push({ name: file, timestamps });
-    }
+    // Create root file entries
+    const rootFiles = root.map((file) =>
+      this.createFileEntry(file, path.join(this.config.memoryDir, file))
+    );
 
-    const monthlyMap = new Map<
-      string,
-      Array<{ name: string; timestamps: string[] }>
-    >();
+    // Create project file entries
+    const projectFiles = project.map((file) =>
+      this.createFileEntry(file, path.join(this.projectDir, file))
+    );
+
+    // Group daily files by month
+    const monthlyMap = new Map<string, FileEntry[]>();
 
     for (const file of daily) {
       const dateStr = file.replace(".md", "");
       const month = dateStr.slice(0, 7);
-      const filePath = path.join(this.dailyDir, file);
-      const content = this.readFile(filePath);
-      const timestamps = content ? extractTimestamps(content) : [];
+      const entry = this.createFileEntry(
+        file,
+        path.join(this.dailyDir, file),
+        "daily"
+      );
 
       if (!monthlyMap.has(month)) {
         monthlyMap.set(month, []);
       }
-      monthlyMap.get(month)!.push({ name: `daily/${file}`, timestamps });
+      monthlyMap.get(month)!.push(entry);
     }
 
+    // Build month groups
     const monthly: MonthGroup[] = [];
     for (const [month, files] of monthlyMap.entries()) {
       const entryCount = files.reduce((sum, f) => sum + f.timestamps.length, 0);
@@ -472,31 +429,22 @@ export class MemoryManager {
 
     monthly.sort((a, b) => b.month.localeCompare(a.month));
 
-    return { root: rootFiles, monthly };
+    return { root: rootFiles, project: projectFiles, monthly };
   }
 
-  listFilesByPeriod(
-    period: string
-  ): Array<{ name: string; timestamps: string[] }> {
+  listFilesByPeriod(period: string): FileEntry[] {
     const { daily } = this.listFiles();
-    const result: Array<{ name: string; timestamps: string[] }> = [];
+    const result: FileEntry[] = [];
 
     const filteredDaily = daily.filter((file) => {
       const dateStr = file.replace(".md", "");
-      if (period.length === 7) {
-        return dateStr.startsWith(period);
-      }
-      if (period.length === 4) {
-        return dateStr.startsWith(period);
-      }
-      return false;
+      return dateStr.startsWith(period);
     });
 
     for (const file of filteredDaily) {
-      const filePath = path.join(this.dailyDir, file);
-      const content = this.readFile(filePath);
-      const timestamps = content ? extractTimestamps(content) : [];
-      result.push({ name: `daily/${file}`, timestamps });
+      result.push(
+        this.createFileEntry(file, path.join(this.dailyDir, file), "daily")
+      );
     }
 
     return result;

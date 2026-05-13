@@ -53,7 +53,7 @@ function clearModelCache(): void {
   } catch {}
 }
 
-export async function initEmbedder(): Promise<void> {
+async function initEmbedder(): Promise<void> {
   if (!initPromise) {
     initPromise = (async () => {
       let retries = 0;
@@ -97,7 +97,7 @@ export async function initEmbedder(): Promise<void> {
   await initPromise;
 }
 
-export async function getEmbedder(): Promise<any> {
+async function getEmbedder(): Promise<any> {
   if (!embedder) {
     await initEmbedder();
   }
@@ -112,8 +112,4 @@ export async function embedText(text: string): Promise<number[]> {
 
 export function hashContent(text: string): string {
   return crypto.createHash("sha256").update(text).digest("hex");
-}
-
-export async function isInitialized(): Promise<boolean> {
-  return embedder !== null;
 }

@@ -1,83 +1,129 @@
-import * as path from "node:path";
+import path from "path";
 import { LocalIndex } from "vectra";
 
 import { getMemoryDir } from "./config.js";
 
-let rootIndex: LocalIndex | null = null;
-let dailyIndex: LocalIndex | null = null;
+type IndexType = "root" | "daily" | "project";
 
-function getRootIndexPath(): string {
-  return path.join(getMemoryDir(), "root.index");
+interface IndexConfig {
+  name: IndexType;
+  path: string;
+  instance: LocalIndex | null;
 }
 
-function getDailyIndexPath(): string {
-  return path.join(getMemoryDir(), "daily.index");
-}
+const indexes: Record<IndexType, IndexConfig> = {
+  root: {
+    name: "root",
+    path: path.join(getMemoryDir(), "root.index"),
+    instance: null,
+  },
+  daily: {
+    name: "daily",
+    path: path.join(getMemoryDir(), "daily.index"),
+    instance: null,
+  },
+  project: {
+    name: "project",
+    path: path.join(getMemoryDir(), "project.index"),
+    instance: null,
+  },
+};
 
-async function getRootIndex(): Promise<LocalIndex> {
-  if (!rootIndex) {
-    rootIndex = new LocalIndex(getRootIndexPath());
-    if (!(await rootIndex.isIndexCreated())) {
-      await rootIndex.createIndex();
-    }
+// Track initialization promises to prevent race conditions
+const initPromises = new Map<IndexType, Promise<LocalIndex>>();
+
+async function getIndex(type: IndexType): Promise<LocalIndex> {
+  const config = indexes[type];
+
+  // Return existing instance
+  if (config.instance) {
+    return config.instance;
   }
-  return rootIndex;
+
+  // Check if initialization is already in progress
+  const existing = initPromises.get(type);
+  if (existing) {
+    return existing;
+  }
+
+  // Create new initialization promise
+  const initPromise = (async () => {
+    try {
+      const instance = new LocalIndex(config.path);
+      if (!(await instance.isIndexCreated())) {
+        await instance.createIndex();
+      }
+      config.instance = instance;
+      return instance;
+    } catch (error) {
+      // Clear on error so next call can retry
+      initPromises.delete(type);
+      throw error;
+    }
+  })();
+
+  initPromises.set(type, initPromise);
+  return initPromise;
 }
 
-async function getDailyIndex(): Promise<LocalIndex> {
-  if (!dailyIndex) {
-    dailyIndex = new LocalIndex(getDailyIndexPath());
-    if (!(await dailyIndex.isIndexCreated())) {
-      await dailyIndex.createIndex();
-    }
+async function getIndexForFile(filePath: string): Promise<LocalIndex> {
+  if (filePath.includes("/daily/")) {
+    return getIndex("daily");
+  } else if (filePath.includes("/project/")) {
+    return getIndex("project");
   }
-  return dailyIndex;
+  return getIndex("root");
 }
 
 export interface EmbeddedChunk {
-  vector: number[];
-  metadata: Record<string, string>;
+  text: string;
+  heading: string;
+  hash: string;
 }
 
 export async function upsertFile(
   filePath: string,
   chunks: EmbeddedChunk[]
 ): Promise<void> {
-  const index = filePath.includes("/daily/")
-    ? await getDailyIndex()
-    : await getRootIndex();
+  const index = await getIndexForFile(filePath);
 
   const existing = await index.listItems();
   const existingByHash = new Map<string, string>();
-  const toDelete: string[] = [];
 
   for (const item of existing) {
     if (item.metadata && String(item.metadata.filePath) === filePath) {
-      const hash = item.metadata.hash ? String(item.metadata.hash) : null;
-      if (hash) {
-        existingByHash.set(hash, String(item.id));
-      } else {
-        toDelete.push(String(item.id));
-      }
+      existingByHash.set(String(item.metadata.chunkHash), String(item.id));
     }
   }
 
-  const newHashes = new Set(chunks.map((c) => c.metadata.hash));
+  const newHashes = new Set(chunks.map((c) => c.hash));
 
+  // Remove outdated chunks
   for (const [hash, id] of existingByHash) {
     if (!newHashes.has(hash)) {
-      toDelete.push(id);
+      await index.deleteItem(id);
     }
   }
 
-  for (const id of toDelete) {
-    await index.deleteItem(id);
-  }
+  // Import embedText here to avoid circular dependency
+  const { embedText } = await import("./embedding.js");
 
-  for (const { vector, metadata } of chunks) {
-    if (!existingByHash.has(metadata.hash)) {
-      await index.insertItem({ vector, metadata });
+  // Insert or update chunks
+  for (const chunk of chunks) {
+    if (existingByHash.has(chunk.hash)) {
+      continue;
     }
+
+    const embedding = await embedText(chunk.text);
+    await index.insertItem({
+      vector: embedding,
+      metadata: {
+        filePath,
+        heading: chunk.heading,
+        text: chunk.text,
+        chunkHash: chunk.hash,
+      },
+    });
   }
 }
 
@@ -88,59 +134,72 @@ export interface SearchResult {
   text: string;
 }
 
+function mapSearchResult(item: {
+  score: number;
+  item: { metadata: Record<string, unknown> };
+}): SearchResult {
+  return {
+    score: item.score,
+    filePath: String(item.item.metadata.filePath),
+    heading: String(item.item.metadata.heading),
+    text: String(item.item.metadata.text),
+  };
+}
+
 export async function semanticSearch(
   queryVector: number[],
   topK: number = 20
 ): Promise<SearchResult[]> {
-  const results: SearchResult[] = [];
+  // Sequential initialization to avoid Bun NAPI concurrency issues
+  const rootIdx = await getIndex("root");
+  const dailyIdx = await getIndex("daily");
+  const projectIdx = await getIndex("project");
 
-  const rootIdx = await getRootIndex();
-  const dailyIdx = await getDailyIndex();
+  // Sequential queries - safer for SQLite + Bun NAPI
+  const rootResults = await rootIdx.queryItems(queryVector, "", topK);
+  const dailyResults = await dailyIdx.queryItems(queryVector, "", topK);
+  const projectResults = await projectIdx.queryItems(queryVector, "", topK);
 
-  const [rootResults, dailyResults] = await Promise.all([
-    rootIdx.queryItems(queryVector, "", topK),
-    dailyIdx.queryItems(queryVector, "", topK),
-  ]);
-
-  for (const item of rootResults) {
-    results.push({
-      score: item.score,
-      filePath: String(item.item.metadata.filePath),
-      heading: String(item.item.metadata.heading),
-      text: String(item.item.metadata.text),
-    });
-  }
-
-  for (const item of dailyResults) {
-    results.push({
-      score: item.score,
-      filePath: String(item.item.metadata.filePath),
-      heading: String(item.item.metadata.heading),
-      text: String(item.item.metadata.text),
-    });
-  }
+  const results: SearchResult[] = [
+    ...rootResults.map(mapSearchResult),
+    ...dailyResults.map(mapSearchResult),
+    ...projectResults.map(mapSearchResult),
+  ];
 
   results.sort((a, b) => b.score - a.score);
   return results.slice(0, topK);
 }
 
-export async function deleteFileVectors(filePath: string): Promise<void> {
-  const index = filePath.includes("/daily/")
-    ? await getDailyIndex()
-    : await getRootIndex();
-  const existing = await index.listItems();
-
-  for (const item of existing) {
-    if (item.metadata && String(item.metadata.filePath) === filePath) {
-      await index.deleteItem(String(item.id));
-    }
-  }
-}
-
-export async function checkIndexExists(
-  type: "root" | "daily"
-): Promise<boolean> {
-  const index = type === "root" ? await getRootIndex() : await getDailyIndex();
+export async function checkIndexExists(type: IndexType): Promise<boolean> {
+  const index = await getIndex(type);
   const items = await index.listItems();
   return items.length > 0;
 }
+
+// Cleanup function to close indexes before exit
+export async function closeIndexes(): Promise<void> {
+  for (const config of Object.values(indexes)) {
+    if (config.instance) {
+      // Clear the reference - actual SQLite cleanup happens in finalizer
+      config.instance = null;
+    }
+  }
+  initPromises.clear();
+}
+
+// Register cleanup handler for graceful shutdown
+process.on("beforeExit", () => {
+  closeIndexes().catch(() => {});
+});
+
+process.on("SIGINT", () => {
+  closeIndexes()
+    .then(() => process.exit(0))
+    .catch(() => process.exit(1));
+});
+
+process.on("SIGTERM", () => {
+  closeIndexes()
+    .then(() => process.exit(0))
+    .catch(() => process.exit(1));
+});

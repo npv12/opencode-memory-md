@@ -22,7 +22,20 @@ Add to your OpenCode configuration at `~/.config/opencode/opencode.json`:
 | `IDENTITY.md` | AI identity (name, persona, behavioral rules) |
 | `USER.md` | User profile (name, preferences, context) |
 | `daily/YYYY-MM-DD.md` | Daily logs (day-to-day activities) |
+| `project/{folder-name}.md` | Project knowledge: features, capabilities, patterns, conventions |
 | `BOOTSTRAP.md` | First run setup instructions (deleted after setup) |
+
+### Project Memory
+
+Project memory automatically tracks knowledge about the current project:
+- **Features**: What the project does, main capabilities
+- **Conventions**: Coding standards, patterns specific to this project
+- **Gotchas**: Common mistakes, project-specific pitfalls
+- **Decisions**: Why certain approaches were chosen
+
+Location: `~/.config/opencode/memory/project/{current-folder-name}.md`
+
+**Note**: Project memory is NOT automatically injected. Use `memory --action read --target project` or `memory --action search --query <keywords>` to access it.
 
 ## Storage Location
 
@@ -35,7 +48,7 @@ Add to your OpenCode configuration at `~/.config/opencode/opencode.json`:
 
 | Action | Description | Parameters |
 |--------|-------------|------------|
-| `read` | Read memory file | `target`: memory, identity, user, daily |
+| `read` | Read memory file | `target`: memory, identity, user, daily, project |
 | `write` | Write to memory file | `target`, `content`, `mode`: append/overwrite |
 | `edit` | Edit specific part of file (not daily) | `target`, `oldString`, `newString` |
 | `search` | Search memory files | `query`, `max_results` (optional) |
@@ -66,9 +79,20 @@ memory --action list
 
 ## Context Injection
 
-MEMORY.md, IDENTITY.md, and USER.md are automatically injected into the system prompt at session start.
+The following files are **automatically injected** into every system prompt:
 
-Daily logs must be accessed via the `memory` tool.
+| File | Auto-Injected | Access Method |
+|------|---------------|---------------|
+| `MEMORY.md` | ✅ Yes | Always available |
+| `IDENTITY.md` | ✅ Yes | Always available |
+| `USER.md` | ✅ Yes | Always available |
+| `daily/*.md` | ❌ No | Use `memory --action read --target daily` |
+| `project/*.md` | ❌ No | Use `memory --action read --target project` or `memory --action search --query <text>` |
+
+**Why this distinction?**
+- **Global files** (MEMORY, IDENTITY, USER) are small, always relevant, and needed for consistent behavior
+- **Daily logs** are temporal and large - query only when needed
+- **Project memory** is searchable and should be queried explicitly to keep prompts focused
 
 ## License
 
