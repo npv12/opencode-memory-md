@@ -27,16 +27,90 @@ interface FileList {
   project: string[];
 }
 
+// Queue for serializing embedding operations to avoid Bun NAPI concurrency issues
+class EmbeddingQueue {
+  private queue: Array<{
+    filePath: string;
+    content: string;
+  }> = [];
+  private isProcessing = false;
+  private isExiting = false;
+
+  constructor() {
+    // Clear queue on process exit to avoid NAPI cleanup crashes
+    process.once("beforeExit", () => {
+      this.isExiting = true;
+      this.queue.length = 0; // Clear pending jobs
+      console.log("[embedding] Process exiting, cleared embedding queue");
+    });
+  }
+
+  // Fire-and-forget: add to queue without blocking caller
+  add(filePath: string, content: string): void {
+    if (this.isExiting) {
+      console.log(`[embedding] Skipping ${filePath}: process is exiting`);
+      return;
+    }
+
+    this.queue.push({ filePath, content });
+    // Fire-and-forget: don't await, just trigger processing
+    this.processNext().catch((err) => {
+      console.error("[embedding] Queue processing error:", err);
+    });
+  }
+
+  private async processNext(): Promise<void> {
+    if (this.isProcessing || this.queue.length === 0 || this.isExiting) {
+      return;
+    }
+
+    this.isProcessing = true;
+    const item = this.queue.shift();
+
+    if (item) {
+      try {
+        const chunks = chunkMarkdown(item.content, item.filePath);
+        await upsertFile(item.filePath, chunks);
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      } catch (_err) {
+        // Gracefully catch errors - don't let them propagate and crash
+        const errMsg = (_err as Error).message || String(_err);
+        if (errMsg.includes("not initialized")) {
+          // Vector store not initialized, silently ignore
+        } else {
+          console.error(
+            `[embedding] Failed to embed ${item.filePath}: ${errMsg}`
+          );
+        }
+      }
+    }
+
+    this.isProcessing = false;
+
+    // Continue processing remaining items
+    if (this.queue.length > 0 && !this.isExiting) {
+      // Use setImmediate to allow event loop to process other events
+      setImmediate(() => {
+        this.processNext().catch((err) => {
+          console.error("[embedding] Queue processing error:", err);
+        });
+      });
+    }
+  }
+}
+
 export class MemoryManager {
   private config: MemoryConfig;
   private dailyDir: string;
   private projectDir: string;
+  private embeddingQueue: EmbeddingQueue;
 
   constructor(config: MemoryConfig) {
     this.config = config;
     this.dailyDir = path.join(config.memoryDir, "daily");
     this.projectDir =
       config.projectDir || path.join(config.memoryDir, "project");
+    this.embeddingQueue = new EmbeddingQueue();
   }
 
   ensureDirectories(): void {
@@ -124,14 +198,9 @@ export class MemoryManager {
   writeFile(filePath: string, content: string): void {
     checkLineLimit(filePath, content);
     atomicWrite(filePath, content);
+    // Fire-and-forget background embedding
+    this.embedAndIndex(filePath, content);
     gitCommit(`Update ${path.basename(filePath)}`);
-
-    // Trigger background embedding - don't await, let it run in background
-    this.embedAndIndex(filePath, content).catch((err) => {
-      console.error(
-        `[embedding] Background embed failed for ${filePath}: ${(err as Error).message}`
-      );
-    });
   }
 
   editFile(filePath: string, oldString: string, newString: string): void {
@@ -153,15 +222,9 @@ export class MemoryManager {
 
     const updatedContent = content.replace(oldString, newString);
     atomicWrite(filePath, updatedContent);
+    // Fire-and-forget background embedding with new content
+    this.embedAndIndex(filePath, updatedContent);
     gitCommit(`Edit ${path.basename(filePath)}`);
-
-    // Trigger background embedding - don't await, let it run in background
-    const finalContent = updatedContent;
-    this.embedAndIndex(filePath, finalContent).catch((err) => {
-      console.error(
-        `[embedding] Background embed failed for ${filePath}: ${(err as Error).message}`
-      );
-    });
   }
 
   async deleteByTimestamp(
@@ -195,14 +258,9 @@ export class MemoryManager {
       .join("\n\n");
 
     atomicWrite(filePath, newContent);
+    // Fire-and-forget background embedding with new content
+    this.embedAndIndex(filePath, newContent);
     gitCommit(`Delete entries from ${path.basename(filePath)}`);
-
-    // Trigger background embedding - don't await, let it run in background
-    this.embedAndIndex(filePath, newContent).catch((err) => {
-      console.error(
-        `[embedding] Background embed failed for ${filePath}: ${(err as Error).message}`
-      );
-    });
 
     return `Deleted ${entries.length - filteredEntries.length} entries from ${displayName}`;
   }
@@ -216,15 +274,9 @@ export class MemoryManager {
 
     checkLineLimit(filePath, newContent);
     atomicWrite(filePath, newContent);
+    // Fire-and-forget background embedding with new content
+    this.embedAndIndex(filePath, newContent);
     gitCommit(`Append to ${path.basename(filePath)}`);
-
-    // Trigger background embedding - don't await, let it run in background
-    const finalContent = newContent;
-    this.embedAndIndex(filePath, finalContent).catch((err) => {
-      console.error(
-        `[embedding] Background embed failed for ${filePath}: ${(err as Error).message}`
-      );
-    });
   }
 
   getLocalTimestamp(): string {
@@ -233,19 +285,9 @@ export class MemoryManager {
     return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
   }
 
-  private async embedAndIndex(
-    filePath: string,
-    content: string
-  ): Promise<void> {
-    try {
-      const chunks = chunkMarkdown(content, filePath);
-      await upsertFile(filePath, chunks);
-    } catch (err) {
-      const errMsg = (err as Error).message;
-      if (!errMsg.includes("not initialized")) {
-        throw err;
-      }
-    }
+  // Fire-and-forget: add to background embedding queue without blocking
+  private embedAndIndex(filePath: string, content: string): void {
+    this.embeddingQueue.add(filePath, content);
   }
 
   fileExists(filePath: string): boolean {
@@ -332,20 +374,8 @@ export class MemoryManager {
     };
   }
 
-  private async checkAnyIndexExists(): Promise<boolean> {
-    const { checkIndexExists } = await import("./vector-store.js");
-    // Sequential checks to avoid Bun NAPI concurrency issues
-    if (await checkIndexExists("root")) return true;
-    if (await checkIndexExists("daily")) return true;
-    if (await checkIndexExists("project")) return true;
-    return false;
-  }
-
-  async embedAllExistingFiles(): Promise<void> {
-    if (await this.checkAnyIndexExists()) {
-      return;
-    }
-
+  embedAllExistingFiles(): void {
+    // Get all files that exist
     const { root, daily, project } = this.listFiles();
     const filesToEmbed: Array<{ filePath: string; content: string }> = [];
 
@@ -363,15 +393,14 @@ export class MemoryManager {
     collectFiles(daily, this.dailyDir);
     collectFiles(project, this.projectDir);
 
+    // Fire-and-forget: queue all files for background embedding
     for (const { filePath, content } of filesToEmbed) {
-      try {
-        await this.embedAndIndex(filePath, content);
-      } catch (err) {
-        console.error(
-          `[embedding] Failed to embed ${filePath}: ${(err as Error).message}`
-        );
-      }
+      this.embedAndIndex(filePath, content);
     }
+
+    console.log(
+      `[embedding] Queued ${filesToEmbed.length} files for background indexing`
+    );
   }
 
   private createFileEntry(

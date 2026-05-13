@@ -176,7 +176,7 @@ export async function checkIndexExists(type: IndexType): Promise<boolean> {
   return items.length > 0;
 }
 
-// Cleanup function to close indexes before exit
+// Cleanup function - called only when explicitly needed (e.g., reindex tool)
 export async function closeIndexes(): Promise<void> {
   for (const config of Object.values(indexes)) {
     if (config.instance) {
@@ -185,21 +185,28 @@ export async function closeIndexes(): Promise<void> {
     }
   }
   initPromises.clear();
+  // Small delay to let any pending operations complete
+  await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
-// Register cleanup handler for graceful shutdown
-process.on("beforeExit", () => {
-  closeIndexes().catch(() => {});
-});
+// Delete all index files - for reindexing
+export async function clearIndexes(): Promise<void> {
+  // Clear in-memory instances first
+  await closeIndexes();
 
-process.on("SIGINT", () => {
-  closeIndexes()
-    .then(() => process.exit(0))
-    .catch(() => process.exit(1));
-});
+  const fs = await import("node:fs");
 
-process.on("SIGTERM", () => {
-  closeIndexes()
-    .then(() => process.exit(0))
-    .catch(() => process.exit(1));
-});
+  for (const config of Object.values(indexes)) {
+    try {
+      // Remove index directory recursively
+      if (fs.existsSync(config.path)) {
+        fs.rmSync(config.path, { recursive: true, force: true });
+      }
+    } catch (err) {
+      console.error(
+        `[embedding] Failed to clear index ${config.name}:`,
+        (err as Error).message
+      );
+    }
+  }
+}

@@ -27,17 +27,15 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
 
   memoryManager.ensureDirectories();
 
-  // Initialize embedding in background - failures are logged but don't block startup
-  (async () => {
-    try {
-      await memoryManager.embedAllExistingFiles();
-    } catch (err) {
-      console.error(
-        "[memory] Failed to embed existing files:",
-        (err as Error).message
-      );
-    }
-  })();
+  // Initialize embedding in background - fire and forget, no async/await
+  try {
+    memoryManager.embedAllExistingFiles();
+  } catch (err) {
+    console.error(
+      "[memory] Failed to queue existing files for embedding:",
+      (err as Error).message
+    );
+  }
 
   const buildContext = (): string => {
     const sections: string[] = [];
@@ -138,6 +136,7 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
           "- `delete`: Delete entries from a memory file by exact timestamp (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)",
           "- `search`: Semantic search across all memory files. Use `period` filter to narrow results.",
           "- `list`: List memory files grouped by month. Use `period` filter for detailed view.",
+          "- `reindex`: Rebuild the search index from scratch. Use if search results seem outdated or incomplete.",
           "",
           "**Targets:**",
           "- `daily` (DEFAULT): daily/YYYY-MM-DD.md - Task logs and day-to-day activities",
@@ -154,7 +153,15 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
         ].join("\n"),
         args: {
           action: tool.schema
-            .enum(["read", "write", "edit", "delete", "search", "list"])
+            .enum([
+              "read",
+              "write",
+              "edit",
+              "delete",
+              "search",
+              "list",
+              "reindex",
+            ])
             .describe("Action to perform"),
           target: tool.schema
             .enum(["memory", "identity", "user", "daily", "project"])
@@ -222,6 +229,8 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
               return handleSearch(args, memoryManager);
             case "list":
               return handleList(args, memoryManager);
+            case "reindex":
+              return handleReindex(memoryManager);
             default:
               return `Unknown action: ${args.action}`;
           }
@@ -515,6 +524,21 @@ function handleList(
   );
 
   return parts.join("\n");
+}
+
+async function handleReindex(memoryManager: MemoryManager): Promise<string> {
+  try {
+    // Step 1: Clear all existing indexes
+    const { clearIndexes } = await import("./vector-store.js");
+    await clearIndexes();
+
+    // Step 2: Queue all existing files for re-embedding (fire and forget)
+    memoryManager.embedAllExistingFiles();
+
+    return "Reindex started. Search index will be rebuilt from all memory files (background process).";
+  } catch (error) {
+    return `Reindex failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
 
 export default MemoryPlugin;

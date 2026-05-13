@@ -1,5 +1,13 @@
 const VALID_TARGETS = ["memory", "identity", "user", "daily", "project"];
-const VALID_ACTIONS = ["read", "write", "edit", "delete", "search", "list"];
+const VALID_ACTIONS = [
+  "read",
+  "write",
+  "edit",
+  "delete",
+  "search",
+  "list",
+  "reindex",
+];
 const MAX_CONTENT_SIZE = 100 * 1024;
 const MAX_MEMORY_LINES = 1000;
 
