@@ -1,6 +1,6 @@
 {
   "name": "@npv12/opencode-memory-md",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Simple markdown-based memory plugin for OpenCode",
   "type": "module",
   "main": "dist/index.js",
