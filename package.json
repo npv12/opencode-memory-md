@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "description": "Simple markdown-based memory plugin for OpenCode",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "4.0.0-next.4",
-    "@opencode-ai/plugin": "^1.2.6",
+    "@opencode-ai/plugin": "0.0.0-beta-17963",
     "vectra": "^0.12.3"
   },
   "overrides": {
@@ -44,8 +44,8 @@
     "prettier": "^3.8.1",
     "typescript": "^5.9.3"
   },
-  "opencode": {
-    "type": "plugin"
+  "exports": {
+    ".": "./src/index.ts"
   },
   "files": [
     "dist"

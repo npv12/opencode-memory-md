@@ -1,5 +1,4 @@
-import type { Plugin, PluginInput } from "@opencode-ai/plugin";
-import { tool } from "@opencode-ai/plugin";
+import { Plugin } from "@opencode-ai/plugin";
 
 import { BootstrapManager } from "./BootstrapManager.js";
 import { MemoryManager } from "./MemoryManager.js";
@@ -18,7 +17,9 @@ import {
 
 const sessionStates = new Map<string, SessionState>();
 
-export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
+export default Plugin.define({
+  id: "npv12.memory-md",
+  setup: async (ctx) => {
   const config = loadConfig();
   const memoryManager = new MemoryManager(config);
   const bootstrapManager = new BootstrapManager(memoryManager);
@@ -65,67 +66,16 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
     return MEMORY_AWARENESS_INSTRUCTIONS;
   };
 
-  return {
-    event: async ({ event }) => {
-      const sessionID = (event as any).sessionID || (event as any).session_id;
-
-      if (event.type === "session.created" && sessionID) {
-        sessionStates.set(sessionID, {
-          memoryOperations: [],
-          lastDailyUpdate: null,
-        });
-      }
-
-      if (event.type === "session.deleted" && sessionID) {
-        sessionStates.delete(sessionID);
-      }
-
-      if (event.type === "session.idle" && sessionID) {
-        const state = sessionStates.get(sessionID);
-        if (
-          state &&
-          state.memoryOperations.length > 0 &&
-          !state.lastDailyUpdate
-        ) {
-          await ctx.client.tui.showToast({
-            body: {
-              message:
-                "Tip: Update daily log with memory_write({target: 'daily', content: '...'})",
-              variant: "info",
-            },
-          });
-        }
-      }
-    },
-
-    "tool.execute.after": async (input) => {
-      if (input.tool === "memory") {
-        const sessionID = input.sessionID;
-        const state = sessionStates.get(sessionID);
-
-        if (state) {
-          state.memoryOperations.push({
-            action: (input.args as any).action,
-            target: (input.args as any).target,
-            timestamp: new Date().toISOString(),
-          });
-
-          if ((input.args as any).target === "daily") {
-            state.lastDailyUpdate = new Date().toISOString();
-          }
-        }
-      }
-    },
-
-    "experimental.chat.system.transform": async (_input, output) => {
+    await ctx.session.hook("context", async (event: { system: Array<unknown>; messages: unknown[]; tools: Record<string, unknown> }) => {
       const memoryContext = buildContext();
       if (!memoryContext) return;
       const instructions = getMemoryInstructions();
-      output.system.push(memoryContext + instructions);
-    },
+      event.system.push({ type: "text", text: `${memoryContext}${instructions}` });
+    });
 
-    tool: {
-      memory: tool({
+    await ctx.tool.transform(async (tools: { add: (tool: any) => void }) => {
+      tools.add({
+        name: "memory",
         description: [
           "Manage memory files for persistent context across sessions.",
           "",
@@ -151,72 +101,43 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
           "- For `search` action: Use `period` filter (YYYY-MM or YYYY) to narrow results",
           "- For `list` action: Shows grouped summary by default, use `period` for details",
         ].join("\n"),
-        args: {
-          action: tool.schema
-            .enum([
-              "read",
-              "write",
-              "edit",
-              "delete",
-              "search",
-              "list",
-              "reindex",
-            ])
-            .describe("Action to perform"),
-          target: tool.schema
-            .enum(["memory", "identity", "user", "daily", "project"])
-            .optional()
-            .describe("Target file: memory, identity, user, daily, or project"),
-          content: tool.schema
-            .string()
-            .optional()
-            .describe("Content to write (for write action)"),
-          mode: tool.schema
-            .enum(["append", "overwrite"])
-            .optional()
-            .describe("Write mode (default: append)"),
-          date: tool.schema
-            .string()
-            .optional()
-            .describe(
-              "Date (YYYY-MM-DD) or timestamp (YYYY-MM-DD HH:MM:SS) for daily target"
-            ),
-          query: tool.schema
-            .string()
-            .optional()
-            .describe("Search query (for search action)"),
-          max_results: tool.schema
-            .number()
-            .optional()
-            .describe("Max search results (default: 20)"),
-          oldString: tool.schema
-            .string()
-            .optional()
-            .describe(
-              "Text to replace (for edit action). Must read file first to get exact text."
-            ),
-          newString: tool.schema
-            .string()
-            .optional()
-            .describe("Replacement text (for edit action)"),
-          timestamp: tool.schema
-            .string()
-            .optional()
-            .describe(
-              "Timestamp to delete (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS). For delete action only."
-            ),
-          period: tool.schema
-            .string()
-            .optional()
-            .describe(
-              "Filter by period: YYYY-MM (month) or YYYY (year). For list and search actions."
-            ),
+        input: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["read", "write", "edit", "delete", "search", "list", "reindex"] },
+            target: { type: "string", enum: ["memory", "identity", "user", "daily", "project"] },
+            content: { type: "string" },
+            mode: { type: "string", enum: ["append", "overwrite"] },
+            date: { type: "string" },
+            query: { type: "string" },
+            max_results: { type: "number" },
+            oldString: { type: "string" },
+            newString: { type: "string" },
+            timestamp: { type: "string" },
+            period: { type: "string" },
+          },
+          required: ["action"],
+          additionalProperties: false,
         },
-        async execute(args) {
+        output: {
+          type: "object",
+          properties: {
+            result: { type: "string" },
+          },
+          required: ["result"],
+          additionalProperties: false,
+        },
+        execute: async (args: any, context: { sessionID: string }) => {
+          const sessionID = context.sessionID;
+          sessionStates.set(sessionID, {
+            memoryOperations: [{ action: args.action, target: args.target ?? "", timestamp: new Date().toISOString() }],
+            lastDailyUpdate: args.target === "daily" ? new Date().toISOString() : null,
+          });
           memoryManager.ensureDirectories();
           validateAction(args.action);
 
-          switch (args.action) {
+          const result = await (async () => {
+            switch (args.action) {
             case "read":
               return handleRead(args, memoryManager);
             case "write":
@@ -233,12 +154,15 @@ export const MemoryPlugin: Plugin = async (ctx: PluginInput) => {
               return handleReindex(memoryManager);
             default:
               return `Unknown action: ${args.action}`;
-          }
+            }
+          })();
+          return { output: { result }, content: result };
         },
-      }),
-    },
-  };
-};
+        options: { codemode: false },
+      });
+    });
+  },
+});
 
 function handleRead(
   params: { target?: string; date?: string },
@@ -540,5 +464,3 @@ async function handleReindex(memoryManager: MemoryManager): Promise<string> {
     return `Reindex failed: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
-
-export default MemoryPlugin;
