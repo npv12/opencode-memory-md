@@ -20,58 +20,68 @@ const sessionStates = new Map<string, SessionState>();
 export default Plugin.define({
   id: "npv12.memory-md",
   setup: async (ctx) => {
-  const config = loadConfig();
-  const memoryManager = new MemoryManager(config);
-  const bootstrapManager = new BootstrapManager(memoryManager);
+    const config = loadConfig();
+    const memoryManager = new MemoryManager(config);
+    const bootstrapManager = new BootstrapManager(memoryManager);
 
-  bootstrapManager.initialize();
+    bootstrapManager.initialize();
 
-  memoryManager.ensureDirectories();
+    memoryManager.ensureDirectories();
 
-  // Initialize embedding in background - fire and forget, no async/await
-  try {
-    memoryManager.embedAllExistingFiles();
-  } catch (err) {
-    console.error(
-      "[memory] Failed to queue existing files for embedding:",
-      (err as Error).message
-    );
-  }
-
-  const buildContext = (): string => {
-    const sections: string[] = [];
-    if (bootstrapManager.isBootstrapNeeded()) {
-      const bootstrapContent = memoryManager.readFile(
-        memoryManager.getBootstrapPath()
+    // Initialize embedding in background - fire and forget, no async/await
+    try {
+      memoryManager.embedAllExistingFiles();
+    } catch (err) {
+      console.error(
+        "[memory] Failed to queue existing files for embedding:",
+        (err as Error).message
       );
-      if (bootstrapContent?.trim()) {
-        sections.push(
-          `## BOOTSTRAP.md (First Run Setup)\n\n${bootstrapContent.trim()}`
+    }
+
+    const buildContext = (): string => {
+      const sections: string[] = [];
+      if (bootstrapManager.isBootstrapNeeded()) {
+        const bootstrapContent = memoryManager.readFile(
+          memoryManager.getBootstrapPath()
         );
+        if (bootstrapContent?.trim()) {
+          sections.push(
+            `## BOOTSTRAP.md (First Run Setup)\n\n${bootstrapContent.trim()}`
+          );
+        }
+      } else {
+        const contextFiles = memoryManager.getContextFiles();
+        for (const file of contextFiles) {
+          sections.push(`## ${file.name}\n\n${file.content}`);
+        }
       }
-    } else {
-      const contextFiles = memoryManager.getContextFiles();
-      for (const file of contextFiles) {
-        sections.push(`## ${file.name}\n\n${file.content}`);
+      if (sections.length === 0) return "";
+      return `# Memory Context\n\n${sections.join("\n\n---\n\n")}`;
+    };
+
+    const getMemoryInstructions = (): string => {
+      if (bootstrapManager.isBootstrapNeeded()) {
+        return BOOTSTRAP_INSTRUCTIONS;
       }
-    }
-    if (sections.length === 0) return "";
-    return `# Memory Context\n\n${sections.join("\n\n---\n\n")}`;
-  };
+      return MEMORY_AWARENESS_INSTRUCTIONS;
+    };
 
-  const getMemoryInstructions = (): string => {
-    if (bootstrapManager.isBootstrapNeeded()) {
-      return BOOTSTRAP_INSTRUCTIONS;
-    }
-    return MEMORY_AWARENESS_INSTRUCTIONS;
-  };
-
-    await ctx.session.hook("context", async (event: { system: Array<unknown>; messages: unknown[]; tools: Record<string, unknown> }) => {
-      const memoryContext = buildContext();
-      if (!memoryContext) return;
-      const instructions = getMemoryInstructions();
-      event.system.push({ type: "text", text: `${memoryContext}${instructions}` });
-    });
+    await ctx.session.hook(
+      "context",
+      async (event: {
+        system: Array<unknown>;
+        messages: unknown[];
+        tools: Record<string, unknown>;
+      }) => {
+        const memoryContext = buildContext();
+        if (!memoryContext) return;
+        const instructions = getMemoryInstructions();
+        event.system.push({
+          type: "text",
+          text: `${memoryContext}${instructions}`,
+        });
+      }
+    );
 
     await ctx.tool.transform(async (tools: { add: (tool: any) => void }) => {
       tools.add({
@@ -104,8 +114,22 @@ export default Plugin.define({
         input: {
           type: "object",
           properties: {
-            action: { type: "string", enum: ["read", "write", "edit", "delete", "search", "list", "reindex"] },
-            target: { type: "string", enum: ["memory", "identity", "user", "daily", "project"] },
+            action: {
+              type: "string",
+              enum: [
+                "read",
+                "write",
+                "edit",
+                "delete",
+                "search",
+                "list",
+                "reindex",
+              ],
+            },
+            target: {
+              type: "string",
+              enum: ["memory", "identity", "user", "daily", "project"],
+            },
             content: { type: "string" },
             mode: { type: "string", enum: ["append", "overwrite"] },
             date: { type: "string" },
@@ -130,30 +154,37 @@ export default Plugin.define({
         execute: async (args: any, context: { sessionID: string }) => {
           const sessionID = context.sessionID;
           sessionStates.set(sessionID, {
-            memoryOperations: [{ action: args.action, target: args.target ?? "", timestamp: new Date().toISOString() }],
-            lastDailyUpdate: args.target === "daily" ? new Date().toISOString() : null,
+            memoryOperations: [
+              {
+                action: args.action,
+                target: args.target ?? "",
+                timestamp: new Date().toISOString(),
+              },
+            ],
+            lastDailyUpdate:
+              args.target === "daily" ? new Date().toISOString() : null,
           });
           memoryManager.ensureDirectories();
           validateAction(args.action);
 
           const result = await (async () => {
             switch (args.action) {
-            case "read":
-              return handleRead(args, memoryManager);
-            case "write":
-              return handleWrite(args, memoryManager);
-            case "edit":
-              return handleEdit(args, memoryManager);
-            case "delete":
-              return handleDelete(args, memoryManager);
-            case "search":
-              return handleSearch(args, memoryManager);
-            case "list":
-              return handleList(args, memoryManager);
-            case "reindex":
-              return handleReindex(memoryManager);
-            default:
-              return `Unknown action: ${args.action}`;
+              case "read":
+                return handleRead(args, memoryManager);
+              case "write":
+                return handleWrite(args, memoryManager);
+              case "edit":
+                return handleEdit(args, memoryManager);
+              case "delete":
+                return handleDelete(args, memoryManager);
+              case "search":
+                return handleSearch(args, memoryManager);
+              case "list":
+                return handleList(args, memoryManager);
+              case "reindex":
+                return handleReindex(memoryManager);
+              default:
+                return `Unknown action: ${args.action}`;
             }
           })();
           return { output: { result }, content: result };
