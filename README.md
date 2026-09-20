@@ -10,7 +10,7 @@ Add to your OpenCode configuration at `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "plugin": ["@npv12/opencode-memory-md"]
+  "plugins": ["@npv12/opencode-memory-md"]
 }
 ```
 
