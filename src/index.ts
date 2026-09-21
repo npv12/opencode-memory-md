@@ -90,11 +90,11 @@ export default Plugin.define({
           "Manage memory files for persistent context across sessions.",
           "",
           "**Actions:**",
-          "- `read`: Read a memory file (memory, identity, user, daily, or list all)",
+          "- `read`: Read a memory file (memory, identity, user, daily, or list all); errors when the result exceeds 1,000 tokens",
           "- `write`: Write to a memory file. **DEFAULT to daily** for task summaries. Use memory target ONLY for crucial long-term knowledge.",
           "- `edit`: Edit a specific part of memory/identity/user/daily file. AI must read file first to get exact oldString.",
           "- `delete`: Delete entries from a memory file by exact timestamp (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)",
-          "- `search`: Semantic search across all memory files. Use `period` filter to narrow results.",
+          "- `search`: Semantic search across all memory files. Use this before `read` for project memory and use `period` to narrow results.",
           "- `list`: List memory files grouped by month. Use `period` filter for detailed view.",
           "- `reindex`: Rebuild the search index from scratch. Use if search results seem outdated or incomplete.",
           "",
@@ -213,6 +213,10 @@ function handleRead(
     const content = memoryManager.readFile(filePath);
     if (!content) {
       return `${displayName} not found or empty.`;
+    }
+    const estimatedTokens = Math.ceil(content.length / 4);
+    if (estimatedTokens > 1000) {
+      return `Error: ${displayName} exceeds the 1,000-token read limit. Use memory search instead.`;
     }
     return content;
   } catch (error) {
