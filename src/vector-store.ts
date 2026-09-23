@@ -2,10 +2,9 @@ import path from "path";
 import { LocalIndex } from "vectra";
 
 import { getMemoryDir } from "./config.js";
-import { hashContent } from "./embedding.js";
+import { EMBEDDING_VERSION, hashContent } from "./embedding.js";
 
 type IndexType = "root" | "daily" | "project";
-const EMBEDDING_VERSION = "nomic-v1.5-search-prefixes";
 
 interface IndexConfig {
   name: IndexType;

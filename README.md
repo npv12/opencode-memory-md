@@ -42,6 +42,10 @@ Location: `~/.config/opencode/memory/project/{current-folder-name}.md`
 - **macOS/Linux**: `~/.config/opencode/memory/`
 - **Windows**: `%APPDATA%/opencode/memory/`
 
+## Embedding Model
+
+The plugin uses `onnx-community/Qwen3-Embedding-0.6B-ONNX` in FP32 mode. Queries use the model's retrieval instruction and last-token pooling. After upgrading from the Nomic model, run `memory --action reindex` once to replace vectors created with the previous embedding contract.
+
 ## Tool: memory
 
 **Actions:**

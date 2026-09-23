@@ -6,6 +6,13 @@ import * as path from "node:path";
 process.env.TRANSFORMERS_VERBOSITY = "error";
 process.env.ORT_LOGGING_LEVEL = "error";
 
+export const EMBEDDING_MODEL_ID = "onnx-community/Qwen3-Embedding-0.6B-ONNX";
+export const EMBEDDING_VERSION = "qwen3-0.6b-fp32-last-token-v1";
+
+const EMBEDDING_DTYPE = "fp32";
+const QUERY_INSTRUCTION =
+  "Given a web search query, retrieve relevant passages that answer the query";
+
 let embedder: any = null;
 let initPromise: Promise<void> | null = null;
 
@@ -16,37 +23,29 @@ function getModelCachePath(): string {
     "node_modules",
     "@huggingface",
     "transformers",
-    ".cache"
+    ".cache",
+    ...EMBEDDING_MODEL_ID.split("/")
   );
 }
 
 function isModelCacheValid(): boolean {
-  const cachePath = getModelCachePath();
-  const modelPath = path.join(
-    cachePath,
-    "nomic-ai",
-    "nomic-embed-text-v1.5",
-    "onnx",
-    "model.onnx"
+  const modelDirectory = path.join(getModelCachePath(), "onnx");
+  const modelPath = path.join(modelDirectory, "model.onnx");
+  const externalDataPath = path.join(modelDirectory, "model.onnx_data");
+
+  if (!fs.existsSync(modelPath) || !fs.existsSync(externalDataPath)) {
+    return false;
+  }
+
+  return (
+    fs.statSync(modelPath).size >= 1000000 &&
+    fs.statSync(externalDataPath).size >= 1000000
   );
-
-  if (!fs.existsSync(modelPath)) {
-    return false;
-  }
-
-  const stat = fs.statSync(modelPath);
-  if (stat.size < 1000000) {
-    return false;
-  }
-
-  return true;
 }
 
 function clearModelCache(): void {
   try {
-    const cachePath = getModelCachePath();
-    const modelPath = path.join(cachePath, "nomic-ai", "nomic-embed-text-v1.5");
-
+    const modelPath = getModelCachePath();
     if (fs.existsSync(modelPath)) {
       fs.rmSync(modelPath, { recursive: true, force: true });
     }
@@ -65,19 +64,18 @@ async function initEmbedder(): Promise<void> {
             clearModelCache();
           }
 
-          embedder = await pipeline(
-            "feature-extraction",
-            "nomic-ai/nomic-embed-text-v1.5",
-            {
-              dtype: "fp32",
-            }
-          );
+          embedder = await pipeline("feature-extraction", EMBEDDING_MODEL_ID, {
+            dtype: EMBEDDING_DTYPE,
+          });
           return;
         } catch (err) {
           const errMsg = (err as Error).message;
           if (
             errMsg.includes("Protobuf parsing failed") ||
-            errMsg.includes("corrupt")
+            errMsg.includes("corrupt") ||
+            errMsg.includes("out of bounds") ||
+            errMsg.includes("External initializer") ||
+            errMsg.includes("Deserialize tensor")
           ) {
             clearModelCache();
             retries++;
@@ -104,13 +102,24 @@ async function getEmbedder(): Promise<any> {
   return embedder;
 }
 
+export function formatEmbeddingInput(
+  text: string,
+  task: "search_document" | "search_query"
+): string {
+  if (task === "search_query") {
+    return `Instruct: ${QUERY_INSTRUCTION}\nQuery:${text}`;
+  }
+
+  return text;
+}
+
 export async function embedText(
   text: string,
   task: "search_document" | "search_query"
 ): Promise<number[]> {
   const embedder = await getEmbedder();
-  const output = await embedder(`${task}: ${text}`, {
-    pooling: "mean",
+  const output = await embedder(formatEmbeddingInput(text, task), {
+    pooling: "last_token",
     normalize: true,
   });
   return Array.from(output.data) as number[];
