@@ -94,7 +94,7 @@ export default Plugin.define({
           "- `write`: Write to a memory file. **DEFAULT to daily** for task summaries. Use memory target ONLY for crucial long-term knowledge.",
           "- `edit`: Edit a specific part of memory/identity/user/daily file. AI must read file first to get exact oldString.",
           "- `delete`: Delete entries from a memory file by exact timestamp (YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)",
-          "- `search`: Semantic search across all memory files. Use this before `read` for project memory and use `period` to narrow results.",
+          "- `search`: Semantic search across all memory files. With `period` (YYYY or YYYY-MM), search dated daily logs only.",
           "- `list`: List memory files grouped by month. Use `period` filter for detailed view.",
           "- `reindex`: Rebuild the search index from scratch. Use if search results seem outdated or incomplete.",
           "",
@@ -108,7 +108,7 @@ export default Plugin.define({
           "**Important:**",
           "- **DEFAULT to daily logs** for task summaries unless user explicitly requests memory.md",
           "- For `delete` action: Use exact timestamp shown in results",
-          "- For `search` action: Use `period` filter (YYYY-MM or YYYY) to narrow results",
+          "- For `search` action: Use `period` (YYYY-MM or YYYY) to search daily logs for that period",
           "- For `list` action: Shows grouped summary by default, use `period` for details",
         ].join("\n"),
         input: {

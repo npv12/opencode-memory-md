@@ -51,7 +51,7 @@ Location: `~/.config/opencode/memory/project/{current-folder-name}.md`
 | `read` | Read memory file | `target`: memory, identity, user, daily, project |
 | `write` | Write to memory file | `target`, `content`, `mode`: append/overwrite |
 | `edit` | Edit specific part of file (not daily) | `target`, `oldString`, `newString` |
-| `search` | Search memory files | `query`, `max_results` (optional) |
+| `search` | Search memory files; `period` limits results to daily logs from that year/month | `query`, `max_results`, `period` (optional) |
 | `list` | List all files | - |
 
 **Examples:**

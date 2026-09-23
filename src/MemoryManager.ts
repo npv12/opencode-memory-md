@@ -8,7 +8,7 @@ import { embedText } from "./embedding.js";
 import { gitCommit } from "./git.js";
 import {
   extractTimestamps,
-  parseContentByTimestamp,
+  removeTimestampEntries,
 } from "./timestampParser.js";
 import type {
   ContextFile,
@@ -244,25 +244,17 @@ export class MemoryManager {
       throw new Error(`${displayName} not found or empty`);
     }
 
-    const entries = parseContentByTimestamp(content);
-    const filteredEntries = entries.filter(
-      (entry) => entry.timestamp !== timestamp
-    );
-
-    if (filteredEntries.length === entries.length) {
+    const result = removeTimestampEntries(content, timestamp);
+    if (result.count === 0) {
       throw new Error(`No entries found matching timestamp: ${timestamp}`);
     }
 
-    const newContent = filteredEntries
-      .map((e) => `<!-- ${e.timestamp} -->\n${e.content}`)
-      .join("\n\n");
-
-    atomicWrite(filePath, newContent);
+    atomicWrite(filePath, result.content);
     // Fire-and-forget background embedding with new content
-    this.embedAndIndex(filePath, newContent);
+    this.embedAndIndex(filePath, result.content);
     gitCommit(`Delete entries from ${path.basename(filePath)}`);
 
-    return `Deleted ${entries.length - filteredEntries.length} entries from ${displayName}`;
+    return `Deleted ${result.count} entries from ${displayName}`;
   }
 
   appendFile(filePath: string, content: string): void {
@@ -324,36 +316,12 @@ export class MemoryManager {
     maxResults: number = 20,
     period?: string
   ): Promise<SemanticSearchResult[]> {
-    const queryVector = await embedText(query);
+    const queryVector = await embedText(query, "search_query");
     const results = await import("./vector-store.js").then((m) =>
-      m.semanticSearch(queryVector, maxResults)
+      m.semanticSearch(queryVector, maxResults, period)
     );
 
-    const resultsWithTimestamp: SemanticSearchResult[] = [];
-    for (const result of results) {
-      const fileContent = this.readFile(result.filePath);
-      let timestamp: string | undefined;
-
-      if (fileContent) {
-        const timestamps = extractTimestamps(fileContent);
-        if (timestamps.length > 0) {
-          timestamp = timestamps[0];
-        }
-      }
-
-      if (period) {
-        if (timestamp && !timestamp.startsWith(period.replace("-", "-"))) {
-          continue;
-        }
-      }
-
-      resultsWithTimestamp.push({
-        ...result,
-        timestamp,
-      });
-    }
-
-    return resultsWithTimestamp;
+    return results;
   }
 
   private readDirFiles(dir: string): string[] {

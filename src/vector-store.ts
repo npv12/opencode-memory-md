@@ -4,6 +4,7 @@ import { LocalIndex } from "vectra";
 import { getMemoryDir } from "./config.js";
 
 type IndexType = "root" | "daily" | "project";
+const EMBEDDING_VERSION = "nomic-v1.5-search-prefixes";
 
 interface IndexConfig {
   name: IndexType;
@@ -79,6 +80,7 @@ export interface EmbeddedChunk {
   text: string;
   heading: string;
   hash: string;
+  timestamp?: string;
 }
 
 export async function upsertFile(
@@ -96,7 +98,9 @@ export async function upsertFile(
     }
   }
 
-  const newHashes = new Set(chunks.map((c) => c.hash));
+  const newHashes = new Set(
+    chunks.map((chunk) => `${EMBEDDING_VERSION}:${chunk.hash}`)
+  );
 
   // Remove outdated chunks
   for (const [hash, id] of existingByHash) {
@@ -110,18 +114,20 @@ export async function upsertFile(
 
   // Insert or update chunks
   for (const chunk of chunks) {
-    if (existingByHash.has(chunk.hash)) {
+    const chunkHash = `${EMBEDDING_VERSION}:${chunk.hash}`;
+    if (existingByHash.has(chunkHash)) {
       continue;
     }
 
-    const embedding = await embedText(chunk.text);
+    const embedding = await embedText(chunk.text, "search_document");
     await index.insertItem({
       vector: embedding,
       metadata: {
         filePath,
         heading: chunk.heading,
         text: chunk.text,
-        chunkHash: chunk.hash,
+        chunkHash,
+        ...(chunk.timestamp ? { timestamp: chunk.timestamp } : {}),
       },
     });
   }
@@ -132,6 +138,7 @@ export interface SearchResult {
   filePath: string;
   heading: string;
   text: string;
+  timestamp?: string;
 }
 
 function mapSearchResult(item: {
@@ -143,13 +150,27 @@ function mapSearchResult(item: {
     filePath: String(item.item.metadata.filePath),
     heading: String(item.item.metadata.heading),
     text: String(item.item.metadata.text),
+    timestamp: item.item.metadata.timestamp
+      ? String(item.item.metadata.timestamp)
+      : undefined,
   };
 }
 
 export async function semanticSearch(
   queryVector: number[],
-  topK: number = 20
+  topK: number = 20,
+  period?: string
 ): Promise<SearchResult[]> {
+  if (period) {
+    const dailyIdx = await getIndex("daily");
+    const items = await dailyIdx.listItems();
+    const results = await dailyIdx.queryItems(queryVector, "", items.length);
+    return results
+      .map(mapSearchResult)
+      .filter((result) => path.basename(result.filePath).startsWith(period))
+      .slice(0, topK);
+  }
+
   // Sequential initialization to avoid Bun NAPI concurrency issues
   const rootIdx = await getIndex("root");
   const dailyIdx = await getIndex("daily");

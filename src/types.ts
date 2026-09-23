@@ -6,11 +6,6 @@ export interface MemoryConfig {
 
 export type MemoryTarget = "memory" | "identity" | "user" | "daily" | "project";
 
-export interface TimestampEntry {
-  timestamp: string;
-  content: string;
-}
-
 export interface SemanticSearchResult {
   score: number;
   filePath: string;

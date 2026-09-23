@@ -104,9 +104,15 @@ async function getEmbedder(): Promise<any> {
   return embedder;
 }
 
-export async function embedText(text: string): Promise<number[]> {
+export async function embedText(
+  text: string,
+  task: "search_document" | "search_query"
+): Promise<number[]> {
   const embedder = await getEmbedder();
-  const output = await embedder(text, { pooling: "mean", normalize: true });
+  const output = await embedder(`${task}: ${text}`, {
+    pooling: "mean",
+    normalize: true,
+  });
   return Array.from(output.data) as number[];
 }
 
