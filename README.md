@@ -44,7 +44,7 @@ Location: `~/.config/opencode/memory/project/{current-folder-name}.md`
 
 ## Embedding Model
 
-The plugin uses `onnx-community/Qwen3-Embedding-0.6B-ONNX` in FP32 mode. Queries use the model's retrieval instruction and last-token pooling. After upgrading from the Nomic model, run `memory --action reindex` once to replace vectors created with the previous embedding contract.
+The plugin uses `Snowflake/snowflake-arctic-embed-m-v2.0` in FP32 mode. Queries use the model's `query: ` prefix and CLS pooling; documents are embedded without a prefix. After upgrading from the previous model, run `memory --action reindex` once to replace vectors created with the previous embedding contract.
 
 ## Tool: memory
 

@@ -6,12 +6,13 @@ import * as path from "node:path";
 process.env.TRANSFORMERS_VERBOSITY = "error";
 process.env.ORT_LOGGING_LEVEL = "error";
 
-export const EMBEDDING_MODEL_ID = "onnx-community/Qwen3-Embedding-0.6B-ONNX";
-export const EMBEDDING_VERSION = "qwen3-0.6b-fp32-last-token-v1";
+export const EMBEDDING_MODEL_ID = "Snowflake/snowflake-arctic-embed-m-v2.0";
+export const EMBEDDING_VERSION = "snowflake-arctic-embed-m-v2.0-fp32-cls-v1";
 
 const EMBEDDING_DTYPE = "fp32";
-const QUERY_INSTRUCTION =
-  "Given a web search query, retrieve relevant passages that answer the query";
+const QUERY_PREFIX = "query: ";
+
+type EmbeddingTask = "search_document" | "search_query";
 
 let embedder: any = null;
 let initPromise: Promise<void> | null = null;
@@ -29,18 +30,13 @@ function getModelCachePath(): string {
 }
 
 function isModelCacheValid(): boolean {
-  const modelDirectory = path.join(getModelCachePath(), "onnx");
-  const modelPath = path.join(modelDirectory, "model.onnx");
-  const externalDataPath = path.join(modelDirectory, "model.onnx_data");
+  const modelPath = path.join(getModelCachePath(), "onnx", "model.onnx");
 
-  if (!fs.existsSync(modelPath) || !fs.existsSync(externalDataPath)) {
+  if (!fs.existsSync(modelPath)) {
     return false;
   }
 
-  return (
-    fs.statSync(modelPath).size >= 1000000 &&
-    fs.statSync(externalDataPath).size >= 1000000
-  );
+  return fs.statSync(modelPath).size >= 1000000;
 }
 
 function clearModelCache(): void {
@@ -104,22 +100,18 @@ async function getEmbedder(): Promise<any> {
 
 export function formatEmbeddingInput(
   text: string,
-  task: "search_document" | "search_query"
+  task: EmbeddingTask
 ): string {
-  if (task === "search_query") {
-    return `Instruct: ${QUERY_INSTRUCTION}\nQuery:${text}`;
-  }
-
-  return text;
+  return task === "search_query" ? `${QUERY_PREFIX}${text}` : text;
 }
 
 export async function embedText(
   text: string,
-  task: "search_document" | "search_query"
+  task: EmbeddingTask
 ): Promise<number[]> {
   const embedder = await getEmbedder();
   const output = await embedder(formatEmbeddingInput(text, task), {
-    pooling: "last_token",
+    pooling: "cls",
     normalize: true,
   });
   return Array.from(output.data) as number[];

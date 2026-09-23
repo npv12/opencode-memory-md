@@ -6,18 +6,22 @@ import {
   formatEmbeddingInput,
 } from "../src/embedding.js";
 
-test("uses the Qwen embedding contract", () => {
-  expect(EMBEDDING_MODEL_ID).toBe("onnx-community/Qwen3-Embedding-0.6B-ONNX");
-  expect(EMBEDDING_VERSION).toBe("qwen3-0.6b-fp32-last-token-v1");
-});
-
-test("formats Qwen queries with the retrieval instruction", () => {
-  expect(formatEmbeddingInput("find the architecture", "search_query")).toBe(
-    "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery:find the architecture"
+test("uses the Snowflake Arctic embedding contract", () => {
+  expect(EMBEDDING_MODEL_ID).toBe(
+    "Snowflake/snowflake-arctic-embed-m-v2.0"
+  );
+  expect(EMBEDDING_VERSION).toBe(
+    "snowflake-arctic-embed-m-v2.0-fp32-cls-v1"
   );
 });
 
-test("leaves Qwen document text unprefixed", () => {
+test("formats Snowflake queries with the retrieval prefix", () => {
+  expect(formatEmbeddingInput("find the architecture", "search_query")).toBe(
+    "query: find the architecture"
+  );
+});
+
+test("leaves Snowflake document text unprefixed", () => {
   expect(formatEmbeddingInput("Architecture\nFastAPI", "search_document")).toBe(
     "Architecture\nFastAPI"
   );
