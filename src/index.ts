@@ -487,12 +487,7 @@ function handleList(
 
 async function handleReindex(memoryManager: MemoryManager): Promise<string> {
   try {
-    // Step 1: Clear all existing indexes
-    const { clearIndexes } = await import("./vector-store.js");
-    await clearIndexes();
-
-    // Step 2: Queue all existing files for re-embedding (fire and forget)
-    memoryManager.embedAllExistingFiles();
+    memoryManager.reindex();
 
     return "Reindex started. Search index will be rebuilt from all memory files (background process).";
   } catch (error) {

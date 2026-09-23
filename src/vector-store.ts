@@ -2,6 +2,7 @@ import path from "path";
 import { LocalIndex } from "vectra";
 
 import { getMemoryDir } from "./config.js";
+import { hashContent } from "./embedding.js";
 
 type IndexType = "root" | "daily" | "project";
 const EMBEDDING_VERSION = "nomic-v1.5-search-prefixes";
@@ -115,12 +116,15 @@ export async function upsertFile(
   // Insert or update chunks
   for (const chunk of chunks) {
     const chunkHash = `${EMBEDDING_VERSION}:${chunk.hash}`;
-    if (existingByHash.has(chunkHash)) {
+    const id = hashContent(`${filePath}:${chunkHash}`);
+    if (existingByHash.get(chunkHash) === id) {
       continue;
     }
 
     const embedding = await embedText(chunk.text, "search_document");
-    await index.insertItem({
+    const previousId = existingByHash.get(chunkHash);
+    await index.upsertItem({
+      id,
       vector: embedding,
       metadata: {
         filePath,
@@ -130,6 +134,9 @@ export async function upsertFile(
         ...(chunk.timestamp ? { timestamp: chunk.timestamp } : {}),
       },
     });
+    if (previousId && previousId !== id) {
+      await index.deleteItem(previousId);
+    }
   }
 }
 

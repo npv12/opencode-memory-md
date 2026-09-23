@@ -19,7 +19,7 @@ import type {
   SemanticSearchResult,
 } from "./types.js";
 import { checkLineLimit } from "./validation.js";
-import { upsertFile } from "./vector-store.js";
+import { clearIndexes, upsertFile } from "./vector-store.js";
 
 interface FileList {
   root: string[];
@@ -29,10 +29,10 @@ interface FileList {
 
 // Queue for serializing embedding operations to avoid Bun NAPI concurrency issues
 class EmbeddingQueue {
-  private queue: Array<{
-    filePath: string;
-    content: string;
-  }> = [];
+  private queue: Array<
+    | { filePath: string; content: string }
+    | { filesForReindex: () => Array<{ filePath: string; content: string }> }
+  > = [];
   private isProcessing = false;
   private isExiting = false;
 
@@ -59,6 +59,15 @@ class EmbeddingQueue {
     });
   }
 
+  reindex(
+    filesForReindex: () => Array<{ filePath: string; content: string }>
+  ): void {
+    this.queue.push({ filesForReindex });
+    this.processNext().catch((err) => {
+      console.error("[embedding] Queue processing error:", err);
+    });
+  }
+
   private async processNext(): Promise<void> {
     if (this.isProcessing || this.queue.length === 0 || this.isExiting) {
       return;
@@ -69,8 +78,13 @@ class EmbeddingQueue {
 
     if (item) {
       try {
-        const chunks = chunkMarkdown(item.content, item.filePath);
-        await upsertFile(item.filePath, chunks);
+        if ("filesForReindex" in item) {
+          await clearIndexes();
+          this.queue.unshift(...item.filesForReindex());
+        } else {
+          const chunks = chunkMarkdown(item.content, item.filePath);
+          await upsertFile(item.filePath, chunks);
+        }
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
       } catch (_err) {
         // Gracefully catch errors - don't let them propagate and crash
@@ -79,7 +93,7 @@ class EmbeddingQueue {
           // Vector store not initialized, silently ignore
         } else {
           console.error(
-            `[embedding] Failed to embed ${item.filePath}: ${errMsg}`
+            `[embedding] Failed to ${"filePath" in item ? `embed ${item.filePath}` : "reindex"}: ${errMsg}`
           );
         }
       }
@@ -99,18 +113,19 @@ class EmbeddingQueue {
   }
 }
 
+const embeddingQueue = new EmbeddingQueue();
+let startupIndexingQueued = false;
+
 export class MemoryManager {
   private config: MemoryConfig;
   private dailyDir: string;
   private projectDir: string;
-  private embeddingQueue: EmbeddingQueue;
 
   constructor(config: MemoryConfig) {
     this.config = config;
     this.dailyDir = path.join(config.memoryDir, "daily");
     this.projectDir =
       config.projectDir || path.join(config.memoryDir, "project");
-    this.embeddingQueue = new EmbeddingQueue();
   }
 
   ensureDirectories(): void {
@@ -279,7 +294,7 @@ export class MemoryManager {
 
   // Fire-and-forget: add to background embedding queue without blocking
   private embedAndIndex(filePath: string, content: string): void {
-    this.embeddingQueue.add(filePath, content);
+    embeddingQueue.add(filePath, content);
   }
 
   fileExists(filePath: string): boolean {
@@ -342,8 +357,7 @@ export class MemoryManager {
     };
   }
 
-  embedAllExistingFiles(): void {
-    // Get all files that exist
+  private existingFiles(): Array<{ filePath: string; content: string }> {
     const { root, daily, project } = this.listFiles();
     const filesToEmbed: Array<{ filePath: string; content: string }> = [];
 
@@ -361,7 +375,14 @@ export class MemoryManager {
     collectFiles(daily, this.dailyDir);
     collectFiles(project, this.projectDir);
 
-    // Fire-and-forget: queue all files for background embedding
+    return filesToEmbed;
+  }
+
+  embedAllExistingFiles(): void {
+    if (startupIndexingQueued) return;
+    const filesToEmbed = this.existingFiles();
+    startupIndexingQueued = true;
+
     for (const { filePath, content } of filesToEmbed) {
       this.embedAndIndex(filePath, content);
     }
@@ -369,6 +390,10 @@ export class MemoryManager {
     console.log(
       `[embedding] Queued ${filesToEmbed.length} files for background indexing`
     );
+  }
+
+  reindex(): void {
+    embeddingQueue.reindex(() => this.existingFiles());
   }
 
   private createFileEntry(
