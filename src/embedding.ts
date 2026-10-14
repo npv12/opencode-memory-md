@@ -69,6 +69,7 @@ async function initEmbedder(): Promise<void> {
           if (
             errMsg.includes("Protobuf parsing failed") ||
             errMsg.includes("corrupt") ||
+            errMsg.includes("does not have a graph") ||
             errMsg.includes("out of bounds") ||
             errMsg.includes("External initializer") ||
             errMsg.includes("Deserialize tensor")
@@ -88,7 +89,13 @@ async function initEmbedder(): Promise<void> {
       }
     })();
   }
-  await initPromise;
+  try {
+    await initPromise;
+  } catch (err) {
+    // Reset so the next call retries instead of replaying this rejection.
+    initPromise = null;
+    throw err;
+  }
 }
 
 async function getEmbedder(): Promise<any> {
