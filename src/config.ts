@@ -25,6 +25,15 @@ export function getCurrentProjectName(): string | null {
   }
 }
 
+export function getProjectNameFromDirectory(
+  directory?: string | null
+): string | null {
+  if (!directory) return null;
+  const trimmed = directory.replace(/[\\/]+$/, "");
+  if (!trimmed) return null;
+  return path.basename(trimmed) || null;
+}
+
 export function resolvePath(filePath: string): string {
   if (filePath.startsWith("~")) {
     return path.join(os.homedir(), filePath.slice(1));

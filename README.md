@@ -35,6 +35,8 @@ Project memory automatically tracks knowledge about the current project:
 
 Location: `~/.config/opencode/memory/project/{current-folder-name}.md`
 
+The name comes from the session's working directory, so one server hosting sessions for several repositories writes one file per repository. Pass `projectName` to `read`, `write`, `edit` or `delete` to target a file explicitly. The server process's own working directory is only a fallback.
+
 **Note**: Project memory is NOT automatically injected. Use `memory --action read --target project` or `memory --action search --query <keywords>` to access it.
 
 ## Storage Location

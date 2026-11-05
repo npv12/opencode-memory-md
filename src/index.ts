@@ -2,7 +2,7 @@ import { Plugin } from "@opencode/plugin";
 
 import { BootstrapManager } from "./BootstrapManager.js";
 import { MemoryManager } from "./MemoryManager.js";
-import { loadConfig } from "./config.js";
+import { getProjectNameFromDirectory, loadConfig } from "./config.js";
 import {
   BOOTSTRAP_INSTRUCTIONS,
   MEMORY_AWARENESS_INSTRUCTIONS,
@@ -139,6 +139,11 @@ export default Plugin.define({
             newString: { type: "string" },
             timestamp: { type: "string" },
             period: { type: "string" },
+            projectName: {
+              type: "string",
+              description:
+                "Project memory file name. Defaults to the name of the session's working directory.",
+            },
           },
           required: ["action"],
           additionalProperties: false,
@@ -166,6 +171,20 @@ export default Plugin.define({
           });
           memoryManager.ensureDirectories();
           validateAction(args.action);
+
+          if (args.target === "project" && !args.projectName) {
+            try {
+              const session = await ctx.session.get({ sessionID });
+              args.projectName =
+                getProjectNameFromDirectory(session.location?.directory) ??
+                undefined;
+            } catch (err) {
+              console.error(
+                "[memory] Failed to resolve the session directory:",
+                (err as Error).message
+              );
+            }
+          }
 
           const result = await (async () => {
             switch (args.action) {
@@ -196,10 +215,10 @@ export default Plugin.define({
 });
 
 function handleRead(
-  params: { target?: string; date?: string },
+  params: { target?: string; date?: string; projectName?: string },
   memoryManager: MemoryManager
 ): string {
-  const { target, date } = params;
+  const { target, date, projectName } = params;
 
   if (!target) {
     return handleList({}, memoryManager);
@@ -208,7 +227,8 @@ function handleRead(
   try {
     const { filePath, displayName } = memoryManager.getPathForTarget(
       target,
-      date
+      date,
+      projectName
     );
     const content = memoryManager.readFile(filePath);
     if (!content) {
